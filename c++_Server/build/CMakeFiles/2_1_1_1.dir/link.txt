@@ -1,1 +1,0 @@
-/usr/bin/c++  -pthread -Wl,--dependency-file=CMakeFiles/2_1_1_1.dir/link.d CMakeFiles/2_1_1_1.dir/main.cpp.o -o 2_1_1_1
