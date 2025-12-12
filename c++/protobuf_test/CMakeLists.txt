@@ -7,6 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # 查找依赖
 find_package(Protobuf REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(PkgConfig REQUIRED)
 
 # Protobuf 代码生成
 set(PROTO_DIR ${CMAKE_SOURCE_DIR}/proto)
@@ -30,9 +31,30 @@ endforeach()
 # Proto 库
 add_library(proto_lib STATIC ${GENERATED_SRCS})
 target_include_directories(proto_lib PUBLIC ${GEN_DIR})
-target_link_libraries(proto_lib PUBLIC protobuf::libprotobuf)
+target_link_libraries(proto_lib
+  PUBLIC
+      protobuf::libprotobuf
+)
 
 # 主程序
 add_executable(server src/main.cpp)
 target_include_directories(server PRIVATE include)
-target_link_libraries(server PRIVATE proto_lib spdlog::spdlog)
+target_link_libraries(server 
+  PRIVATE 
+      proto_lib 
+      spdlog::spdlog
+)
+
+# absl全家桶
+pkg_check_modules(ABSEIL REQUIRED IMPORTED_TARGET
+    absl_log
+    absl_flags
+    absl_flags_parse
+)
+target_link_libraries(server 
+  PRIVATE 
+  PkgConfig::ABSEIL
+  absl_log_internal_check_op
+  absl_die_if_null
+  absl_log_internal_message
+)
