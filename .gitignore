@@ -1,7 +1,50 @@
+# 构建目录
 build/
-generated/*.pb.*
+server/build/
+server/generated/*.pb.*
+client/build/
+client/out/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.eclipse/
+.settings/
+
+# 编译产物
 *.o
+*.obj
 *.exe
 *.out
-*.vscode
-*.idea
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# 日志
+*.log
+logs/
+
+# 配置文件（可选）
+*.local.json
+.env
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+
+# Java
+*.class
+hs_err_pid*
+
+# 临时文件
+*.swp
+*.swo
+*~
