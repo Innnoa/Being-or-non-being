@@ -4,56 +4,54 @@ allprojects {
         appName = "LawnMowerGame"
         gdxVersion = '1.11.0'
         nettyVersion = '4.1.100.Final'
-        protobufVersion = '3.25.1'
-        // 新增：JVM版本（适配LibGDX 1.11+）
-        jvmVersion = '11'
+        protobufVersion = '3.20.1'
+        jvmVersion = '17'
     }
-buildscript {
-    repositories {
-        mavenCentral()
-        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
-        google()
-        // 新增：Protobuf 插件仓库
-        gradlePluginPortal()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:7.0.4'
-        // 新增：Protobuf Gradle 插件（用于生成 Java 代码）
-        classpath "com.google.protobuf:protobuf-gradle-plugin:0.9.4"
-        // 可选：LibGDX 工具插件（方便后续扩展）
-        classpath "com.badlogicgames.gdx:gdx-tools:${gdxVersion}"
-    }
-}
 
-
+    buildscript {
+        repositories {
+            mavenCentral()
+            maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+            google()
+            gradlePluginPortal()
+        }
+        dependencies {
+            classpath 'com.android.tools.build:gradle:7.0.4'
+            classpath "com.google.protobuf:protobuf-gradle-plugin:0.9.4"
+            classpath "com.badlogicgames.gdx:gdx-tools:${gdxVersion}"
+        }
+    }
 
     repositories {
         mavenCentral()
         maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
-        // 新增：阿里云镜像（加速依赖下载）
         maven { url "https://maven.aliyun.com/repository/public/" }
+    }
+
+    // 全局强制 UTF-8 编码（解决中文乱码核心！）
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+        options.compilerArgs << '-Xlint:none' // 关闭无关警告
     }
 }
 
 project(":desktop") {
     apply plugin: "java-library"
-    // 新增：应用application插件（提供desktop:run任务）
     apply plugin: "application"
 
     dependencies {
         implementation project(":core")
         api "com.badlogicgames.gdx:gdx-backend-lwjgl3:$gdxVersion"
         api "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop"
+        // 兜底：desktop 直接引入 Protobuf（避免依赖传递失败）
+        implementation "com.google.protobuf:protobuf-java:$protobufVersion"
     }
 
-    // 新增：配置桌面端启动类（核心！）
     application {
         mainClass = "com.lawnmower.desktop.DesktopLauncher"
-        // 修复中文乱码
         applicationDefaultJvmArgs = ["-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8"]
     }
 
-    // 新增：编译选项（适配JVM版本）
     java {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -66,16 +64,16 @@ project(":core") {
 
     dependencies {
         api "com.badlogicgames.gdx:gdx:$gdxVersion"
-        // 网络依赖
         implementation "io.netty:netty-all:$nettyVersion"
-        // Protobuf核心依赖
-        implementation "com.google.protobuf:protobuf-java:$protobufVersion"
+        // 改为 api 让依赖传递到 desktop 模块！
+        api "com.google.protobuf:protobuf-java:$protobufVersion"
     }
 
 
-    // 新增：编译选项
+
     java {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
 }
