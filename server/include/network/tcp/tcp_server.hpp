@@ -16,6 +16,8 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
  private:
   void do_read();
   void do_write();
+  void handle_packet(const lawnmower::Packet& packet);
+  void send_packet(const lawnmower::Packet& packet);
 
   tcp::socket socket_;
   std::array<char, 1024> buffer_{};

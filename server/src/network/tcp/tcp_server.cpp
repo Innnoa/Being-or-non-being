@@ -1,7 +1,6 @@
 #include "network/tcp/tcp_server.hpp"
 
 TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) {
-
 }
 
 void TcpSession::start() { 
@@ -36,6 +35,34 @@ void TcpSession::do_write() {
       do_read(); // 调用read
     }
   );
+}
+
+void TcpSession::handle_packet(const lawnmower::Packet& packet){
+  switch (packet.msg_type()){
+    case 1: { //login
+      lawnmower::C2s_login login;
+      login.ParseFromString(packet.payload());
+      spdlog::info("player login",login.player_name());
+      lawnmower::S2c_LoginResult result;
+      result.set_success(true);
+      result.set_player_id(1001);
+      result.set_message("login success");
+
+      lawnmower::Packet reply;
+      reply.set_msg_type(2);
+      reply_set_payload(result.SerializeAsString());
+
+      send_packet(reply);
+      break;
+    }
+    default:
+      spdlog::warn("Unknown message type",packet.msg_type());
+  }
+}
+
+void send_packet(const Packet& packet){
+  std::string data = packet.SerializeAsString();
+  uint32_t len = data.size();
 }
 
 TcpServer::TcpServer(asio::io_context& io, uint16_t port): 
