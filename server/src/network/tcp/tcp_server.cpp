@@ -136,7 +136,7 @@ void TcpSession::send_packet(const lawnmower::Packet& packet){
 
 TcpServer::TcpServer(asio::io_context& io, uint16_t port): 
   io_context_(io), // 创建一个上下文
-  acceptor_(io_context_, tcp::endpoint(tcp::v4(), port)) { // 舰艇和接受TCP连接，绑定端口
+  acceptor_(io_context_, tcp::endpoint(tcp::v4(), port)) { // 监听和接受TCP连接，绑定端口
 }
 
 void TcpServer::start() { 
