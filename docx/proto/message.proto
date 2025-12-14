@@ -13,6 +13,28 @@ message Timestamp {
     uint32 tick = 2;        // 游戏帧编号（60FPS）
 }
 
+// 心跳 C2s
+message C2s_Heartbeat {
+    uint64 timestamp =1;
+}
+
+//心跳 S2c
+message S2c_Heartbeat{
+    uint64 timestamp =1;
+}
+
+// 登录
+message C2s_Login {
+    string player name = 1;
+}
+
+// 登录反馈
+message S2c_LoginResult {
+    bool success =1;
+    uint32 player id=2;
+    string message =3;
+}
+
 // 玩家状态（网络同步核心数据）
 message PlayerState {
     uint32 player_id = 1;          // 玩家唯一ID
