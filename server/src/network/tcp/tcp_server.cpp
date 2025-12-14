@@ -1,48 +1,106 @@
 #include "network/tcp/tcp_server.hpp"
+#include <spdlog/spdlog.h>
+#include <arpa/inet.h>
+#include <cstring>
+#include <iostream>
 
-TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) {
+namespace {
+constexpr std::size_t kMaxPacketSize = 64 * 1024; // 设定最大包大小
+}
+
+TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) { //构造函数
 }
 
 void TcpSession::start() { 
-  do_read(); 
+  read_header();
 }
 
-void TcpSession::send(const std::string& data) { // 一个接口，暂时没用上
-  write_data_ = data;
-  do_write();
-}
-
-void TcpSession::do_read() {
+void TcpSession::read_header() {
   auto self = shared_from_this(); // 获取自身的shared_ptr
-  socket_.async_read_some(asio::buffer(buffer_), // 注册异步读取回调，读取到的数据保存到buffer
-    [this, self](const asio::error_code& ec,std::size_t bytes_transferred) {
+  static int tip = 1;
+  asio::async_read(socket_, asio::buffer(length_buffer_), // 先读packet长度
+    [this, self](const asio::error_code& ec, std::size_t) {
       if (ec) {
+        spdlog::warn("Failed to read packet length: {}", ec.message());
         return;
       }
-    write_data_.assign(buffer_.data(), bytes_transferred); // 将buffer中的数据转移到write_data
-    do_write(); // 调用write
+
+      uint32_t net_len = 0;
+      std::memcpy(&net_len, length_buffer_.data(), sizeof(net_len));
+      const uint32_t body_len = ntohl(net_len);
+      std::cout<<"body_len: "<<body_len<<"\n";
+      if (body_len == 0 || body_len > kMaxPacketSize) {
+        spdlog::warn("Invalid packet length: {}", body_len);
+        socket_.close();
+        return;
+      }
+
+      read_buffer_.resize(body_len);
+      std::cout<<"finish: "<<tip<<"\n";
+      ++tip;
+      read_body(body_len);
+    }
+  );
+}
+
+void TcpSession::read_body(std::size_t length) {
+  auto self = shared_from_this(); // 获取自身的shared_ptr
+  asio::async_read(socket_, asio::buffer(read_buffer_, length), // 然后读具体报文
+    [this, self](const asio::error_code& ec, std::size_t) {
+      if (ec) {
+        spdlog::warn("Failed to read packet body: {}", ec.message());
+        return;
+      }
+
+      lawnmower::Packet packet;
+      if (!packet.ParseFromArray(read_buffer_.data(), static_cast<int>(read_buffer_.size()))) {
+        spdlog::warn("Failed to parse protobuf Packet ({} bytes)", read_buffer_.size());
+        read_header();
+        return;
+      }
+
+      handle_packet(packet);
+      if (!socket_.is_open()) { // 已经主动断开，不再继续读
+        return;
+      }
+      read_header();
     }
   );
 }
 
 void TcpSession::do_write() {
   auto self = shared_from_this(); // 获取自身的shared_ptr
-  asio::async_write(socket_, asio::buffer(write_data_), //注册异步写入回调
+  asio::async_write(socket_, asio::buffer(write_queue_.front()), // 注册异步写入回调
     [this, self](const asio::error_code& ec, std::size_t) {
       if (ec) {
+        spdlog::warn("Failed to write packet: {}", ec.message());
         return;
       }
-      do_read(); // 调用read
+      write_queue_.pop_front();
+      if (!write_queue_.empty()) {
+        do_write();
+      }
     }
   );
 }
 
 void TcpSession::handle_packet(const lawnmower::Packet& packet){
   switch (packet.msg_type()){
-    case 1: { //login
-      lawnmower::C2s_login login;
-      login.ParseFromString(packet.payload());
-      spdlog::info("player login",login.player_name());
+    case 0: { // quit
+      spdlog::info("Client requested disconnect");
+      asio::error_code ignored_ec;
+      socket_.shutdown(tcp::socket::shutdown_both, ignored_ec);
+      socket_.close(ignored_ec);
+      break;
+    }
+    case 1: { // login
+      lawnmower::C2s_Login login;
+      if (!login.ParseFromString(packet.payload())) {
+        spdlog::warn("Failed to parse login payload");
+        break;
+      }
+      spdlog::info("player login: {}", login.player_name());
+
       lawnmower::S2c_LoginResult result;
       result.set_success(true);
       result.set_player_id(1001);
@@ -50,19 +108,30 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
 
       lawnmower::Packet reply;
       reply.set_msg_type(2);
-      reply_set_payload(result.SerializeAsString());
+      reply.set_payload(result.SerializeAsString());
 
       send_packet(reply);
       break;
     }
     default:
-      spdlog::warn("Unknown message type",packet.msg_type());
+      spdlog::warn("Unknown message type: {}", packet.msg_type());
   }
 }
 
-void send_packet(const Packet& packet){
-  std::string data = packet.SerializeAsString();
-  uint32_t len = data.size();
+void TcpSession::send_packet(const lawnmower::Packet& packet){
+  const std::string data = packet.SerializeAsString();
+  const uint32_t net_len = htonl(static_cast<uint32_t>(data.size()));
+
+  std::string framed;
+  framed.resize(sizeof(net_len) + data.size());
+  std::memcpy(framed.data(), &net_len, sizeof(net_len));
+  std::memcpy(framed.data() + sizeof(net_len), data.data(), data.size());
+
+  const bool write_in_progress = !write_queue_.empty();
+  write_queue_.push_back(std::move(framed));
+  if (!write_in_progress) {
+    do_write();
+  }
 }
 
 TcpServer::TcpServer(asio::io_context& io, uint16_t port): 

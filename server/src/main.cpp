@@ -1,5 +1,6 @@
 #include <spdlog/spdlog.h>
 #include "network/tcp/tcp_server.hpp"
+#include "../generated/message.pb.h"
 
 int main() {
     try {
