@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package lawnmower;
+
+// 基础通用类型
+message Vector2 {
+    float x = 1; // 坐标X（像素单位）
+    float y = 2; // 坐标Y（像素单位）
+}
+
+message Timestamp {
+    uint64 server_time = 1; // 服务器时间戳（毫秒）
+    uint32 tick = 2;        // 游戏帧编号（60FPS）
+}
+
+// 玩家状态（网络同步核心数据）
+message PlayerState {
+    uint32 player_id = 1;          // 玩家唯一ID
+    Vector2 position = 2;          // 位置
+    float rotation = 3;            // 朝向（角度，单位：度）
+    int32 health = 4;              // 当前血量
+    int32 max_health = 5;          // 最大血量
+    uint32 level = 6;               // 等级
+    uint32 exp = 7;                 // 当前经验
+    uint32 exp_to_next = 8;         // 升级所需经验
+    bool is_alive = 9;             // 是否存活
+    uint32 attack = 10;             // 基础攻击力
+    bool is_friendly = 11;         // 是否为友方（通常玩家为 true）
+    uint32 role_id = 12;           // 角色ID（预留，如豌豆射手、向日葵等）
+    uint32 critical_hit_rate = 13;  // 暴击率（单位：‰ 或 %，由客户端解释）
+    bool has_buff = 14;            // 是否有灌注/增益效果
+    uint32 buff_id = 15;           // Buff ID（0 表示无）
+    uint32 attack_speed = 16;       // 攻击速度（数值越大越快，或表示攻击间隔 ms）
+}
+
+// 射弹信息（如豌豆、子弹）
+message Projectile {
+    uint32 speed = 1;               // 飞行速度（像素/秒）
+    bool has_buff = 2;             // 是否携带 Buff 效果
+    uint32 buff_id = 3;            // Buff ID
+    bool is_friendly = 4;          // 是否为友方射弹
+    uint32 damage = 5;              // 总伤害（服务端计算后下发）
+}
+
+// 敌人状态
+message EnemyState {
+    uint32 enemy_id = 1;           // 敌人实例ID（运行时生成）
+    uint32 type_id = 2;            // 敌人类型ID（关联 EnemyConfig）
+    Vector2 position = 3;          // 位置
+    int32 health = 4;              // 当前血量
+    int32 max_health = 5;          // 最大血量
+    bool is_alive = 6;             // 是否存活
+    uint32 wave_id = 7;            // 所属波次
+    bool is_friendly = 8;          // 是否为友方（通常为 false，除非有召唤机制）
+}
+
+// 道具状态
+message ItemState {
+    uint32 item_id = 1;            // 道具实例ID
+    uint32 type_id = 2;            // 道具类型ID（关联 ItemConfig）
+    Vector2 position = 3;          // 位置
+    bool is_picked = 4;            // 是否已被拾取
+}
+
+// 客户端 → 服务端：玩家输入
+message C2S_PlayerInput {
+    uint32 player_id = 1;          // 玩家唯一ID
+    Vector2 move_direction = 2;    // 移动方向（归一化向量）
+    bool is_attacking = 3;         // 是否正在攻击
+    Timestamp input_time = 4;      // 输入时间戳（用于延迟补偿）
+}
+
+// 服务端 → 客户端：游戏状态同步（增量更新）
+message S2C_GameStateSync {
+    Timestamp sync_time = 1;                     // 同步时间戳
+    repeated PlayerState players = 2;            // 变化的玩家状态
+    repeated EnemyState enemies = 3;             // 变化的敌人状态
+    repeated ItemState items = 4;                // 道具状态（如新掉落或被拾取）
+    uint32 remaining_enemies = 5;                // 当前波次剩余敌人数量
+    uint32 current_wave = 6;                     // 当前波次编号
+}
+
+// 服务端 → 客户端：战斗事件（用于特效、音效、UI反馈）
+message S2C_CombatEvent {
+    enum EventType {
+        ATTACK = 0;    // 攻击命中
+        DEATH = 1;     // 死亡
+        LEVEL_UP = 2;  // 升级
+        DROP = 3;      // 掉落道具
+    }
+    EventType event_type = 1;
+    uint32 target_id = 2;          // 目标ID（玩家或敌人）
+    uint32 caster_id = 3;          // 触发者ID
+    uint32 value = 4;               // 数值（伤害值 / 经验值 / 道具 type_id）
+    Vector2 event_position = 5;    // 事件发生位置
+    string effect_id = 6;          // 特效资源ID（如 "pea_explosion"）
+}
+
+// —————— 以下为配置类（仅客户端/服务端本地加载，不通过网络传输）——————
+
+// 敌人配置（静态数据）
+message EnemyConfig {
+    uint32 type_id = 1;            // 与 EnemyState.type_id 对应
+    string name = 2;               // 名称（如 "普通僵尸"）
+    string texture_id = 3;         // 贴图资源ID（如 "zombie_normal"）
+    string walk_anim_id = 4;       // 行走动画ID
+    string die_anim_id = 5;        // 死亡动画ID
+    int32 max_health = 6;          // 最大血量（用于服务端生成）
+    float speed = 7;               // 移动速度（像素/秒）
+    uint32 damage = 8;              // 单次伤害
+    uint32 exp_reward = 9;          // 击杀后奖励经验
+}
+
+// 道具配置
+message ItemConfig {
+    uint32 type_id = 1;            // 与 ItemState.type_id 对应
+    string name = 2;
+    string texture_id = 3;         // 贴图资源ID（如 "coin"）
+    string pick_effect_id = 4;     // 拾取特效ID（如 "pick_coin"）
+    uint32 exp_value = 5;           // 若为经验道具，此字段有效
+}
+
+// 网络消息封装（通用包格式）
+message Packet {
+    uint32 msg_type = 1;           // 消息类型（1=登录, 2=输入, 3=状态同步...）
+    bytes payload = 2;             // 序列化后的具体消息内容
+}
