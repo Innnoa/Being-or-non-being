@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <array>
 #include <asio.hpp>
+#include <atomic>
 #include <deque>
 #include <memory>
 #include <string>
 #include <vector>
+#include <google/protobuf/message.h>
 #include "../../../generated/message.pb.h"
 
 using asio::ip::tcp;
@@ -15,6 +17,7 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
  public: 
    explicit TcpSession(tcp::socket socket);
    void start();
+   void SendProto(lawnmower::MessageType type, const google::protobuf::Message& message);
 
  private:
   void read_header();
@@ -22,11 +25,16 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   void do_write();
   void handle_packet(const lawnmower::Packet& packet);
   void send_packet(const lawnmower::Packet& packet);
+  void handle_disconnect();
 
   tcp::socket socket_;
   std::array<char, sizeof(uint32_t)> length_buffer_{};
   std::vector<char> read_buffer_;
   std::deque<std::string> write_queue_;
+  bool closed_ = false;
+  uint32_t player_id_ = 0;
+  std::string player_name_;
+  static std::atomic<uint32_t> next_player_id_;
 };
 
 class TcpServer {

@@ -1,4 +1,5 @@
 #include "network/tcp/tcp_server.hpp"
+#include "game/managers/room_manager.hpp"
 #include <spdlog/spdlog.h>
 #include <arpa/inet.h>
 #include <chrono>
@@ -9,11 +10,38 @@ namespace {
 constexpr std::size_t kMaxPacketSize = 64 * 1024; // 设定最大包大小
 }
 
+std::atomic<uint32_t> TcpSession::next_player_id_{1};
+
 TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) { //构造函数
 }
 
 void TcpSession::start() { 
   read_header();
+}
+
+void TcpSession::SendProto(lawnmower::MessageType type, const google::protobuf::Message& message) {
+  if (closed_) {
+    return;
+  }
+  lawnmower::Packet packet;
+  packet.set_msg_type(type);
+  packet.set_payload(message.SerializeAsString());
+  send_packet(packet);
+}
+
+void TcpSession::handle_disconnect() {
+  if (closed_) {
+    return;
+  }
+  closed_ = true;
+
+  if (player_id_ != 0) {
+    RoomManager::Instance().RemovePlayer(player_id_);
+  }
+
+  asio::error_code ignored_ec;
+  socket_.shutdown(tcp::socket::shutdown_both, ignored_ec);
+  socket_.close(ignored_ec);
 }
 
 void TcpSession::read_header() {
@@ -23,6 +51,7 @@ void TcpSession::read_header() {
     [this, self](const asio::error_code& ec, std::size_t) {
       if (ec) {
         spdlog::warn("Failed to read packet length: {}", ec.message());
+        handle_disconnect();
         return;
       }
 
@@ -32,7 +61,7 @@ void TcpSession::read_header() {
       std::cout<<"body_len: "<<body_len<<"\n";
       if (body_len == 0 || body_len > kMaxPacketSize) {
         spdlog::warn("Invalid packet length: {}", body_len);
-        socket_.close();
+        handle_disconnect();
         return;
       }
 
@@ -50,6 +79,7 @@ void TcpSession::read_body(std::size_t length) {
     [this, self](const asio::error_code& ec, std::size_t) {
       if (ec) {
         spdlog::warn("Failed to read packet body: {}", ec.message());
+        handle_disconnect();
         return;
       }
 
@@ -61,7 +91,7 @@ void TcpSession::read_body(std::size_t length) {
       }
 
       handle_packet(packet);
-      if (!socket_.is_open()) { // 已经主动断开，不再继续读
+      if (closed_ || !socket_.is_open()) { // 已经主动断开，不再继续读
         return;
       }
       read_header();
@@ -75,6 +105,7 @@ void TcpSession::do_write() {
     [this, self](const asio::error_code& ec, std::size_t) {
       if (ec) {
         spdlog::warn("Failed to write packet: {}", ec.message());
+        handle_disconnect();
         return;
       }
       write_queue_.pop_front();
@@ -95,18 +126,26 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
         spdlog::warn("Failed to parse login payload");
         break;
       }
-      spdlog::info("player login: {}", login.player_name());
+
+      if (player_id_ != 0) {
+        lawnmower::S2C_LoginResult result;
+        result.set_success(false);
+        result.set_player_id(player_id_);
+        result.set_message_login("重复登录");
+        SendProto(MessageType::MSG_S2C_LOGIN_RESULT, result);
+        break;
+      }
+
+      player_id_ = next_player_id_.fetch_add(1);
+      player_name_ = login.player_name().empty() ? ("玩家" + std::to_string(player_id_)) : login.player_name();
 
       lawnmower::S2C_LoginResult result;
       result.set_success(true);
-      result.set_player_id(1001);
+      result.set_player_id(player_id_);
       result.set_message_login("login success");
 
-      lawnmower::Packet reply;
-      reply.set_msg_type(MessageType::MSG_S2C_LOGIN_RESULT);
-      reply.set_payload(result.SerializeAsString());
-
-      send_packet(reply);
+      SendProto(MessageType::MSG_S2C_LOGIN_RESULT, result);
+      spdlog::info("player login: {} (id={})", player_name_, player_id_);
       break;
     }
     case MessageType::MSG_C2S_HEARTBEAT: { // heartbeat echo with server info
@@ -122,18 +161,63 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
       reply.set_timestamp(now_ms);
       reply.set_online_players(1);
 
-      lawnmower::Packet packet_out;
-      packet_out.set_msg_type(MessageType::MSG_S2C_HEARTBEAT);
-      packet_out.set_payload(reply.SerializeAsString());
+      SendProto(MessageType::MSG_S2C_HEARTBEAT, reply);
+      break;
+    }
+    case MessageType::MSG_C2S_CREATE_ROOM: {
+      lawnmower::C2S_CreateRoom request;
+      if (!request.ParseFromString(packet.payload())) {
+        spdlog::warn("Failed to parse create room payload");
+        break;
+      }
 
-      send_packet(packet_out);
+      lawnmower::S2C_CreateRoomResult result;
+      if (player_id_ == 0) {
+        result.set_success(false);
+        result.set_message_create("请先登录");
+      } else {
+        result = RoomManager::Instance().CreateRoom(player_id_, player_name_, weak_from_this(), request);
+      }
+      SendProto(MessageType::MSG_S2C_CREATE_ROOM_RESULT, result);
+      break;
+    }
+    case MessageType::MSG_C2S_JOIN_ROOM: {
+      lawnmower::C2S_JoinRoom request;
+      if (!request.ParseFromString(packet.payload())) {
+        spdlog::warn("Failed to parse join room payload");
+        break;
+      }
+
+      lawnmower::S2C_JoinRoomResult result;
+      if (player_id_ == 0) {
+        result.set_success(false);
+        result.set_message_join("请先登录");
+      } else {
+        result = RoomManager::Instance().JoinRoom(player_id_, player_name_, weak_from_this(), request);
+      }
+      SendProto(MessageType::MSG_S2C_JOIN_ROOM_RESULT, result);
+      break;
+    }
+    case MessageType::MSG_C2S_LEAVE_ROOM: {
+      lawnmower::C2S_LeaveRoom request;
+      if (!request.ParseFromString(packet.payload())) {
+        spdlog::warn("Failed to parse leave room payload");
+        break;
+      }
+
+      lawnmower::S2C_LeaveRoomResult result;
+      if (player_id_ == 0) {
+        result.set_success(false);
+        result.set_message_leave("请先登录");
+      } else {
+        result = RoomManager::Instance().LeaveRoom(player_id_);
+      }
+      SendProto(MessageType::MSG_S2C_LEAVE_ROOM_RESULT, result);
       break;
     }
     case MessageType::MSG_C2S_REQUEST_QUIT: { // 客户端主动断开连接
       spdlog::info("Client request disconnect");
-      asio::error_code ignored_ec;
-      socket_.shutdown(tcp::socket::shutdown_both,ignored_ec);
-      socket_.close(ignored_ec);
+      handle_disconnect();
       break;
     }
     case MessageType::MSG_UNKNOWN: // 未知类型

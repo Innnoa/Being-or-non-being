@@ -40,6 +40,7 @@ target_link_libraries(proto_lib
 add_executable(server
   src/main.cpp
   src/network/tcp/tcp_server.cpp
+  src/game/managers/room_manager.cpp
 )
 target_include_directories(server PRIVATE include)
 target_link_libraries(server 
