@@ -161,6 +161,91 @@ lawnmower::S2C_LeaveRoomResult RoomManager::LeaveRoom(uint32_t player_id) { // �
   return result;
 }
 
+// 获取房间列表
+lawnmower::S2C_RoomList RoomManager::GetRoomList() const {
+  lawnmower::S2C_RoomList list;
+  std::lock_guard<std::mutex> lock(mutex_); // 互斥锁
+  for (const auto& [room_id, room] : rooms_) { // 生成房间列表
+    auto* info = list.add_rooms();
+    info->set_room_id(room_id);
+    info->set_room_name(room.name);
+    info->set_current_players(static_cast<uint32_t>(room.players.size()));
+    info->set_max_players(room.max_players);
+    info->set_is_playing(room.is_playing);
+    // 获取房主信息
+    const auto host_it = std::find_if(room.players.begin(), room.players.end(),
+                                      [](const RoomPlayer& player) 
+                                      { return player.is_host; });
+    if (host_it != room.players.end()) {
+      info->set_host_name(host_it->player_name);
+    }
+  }
+  return list; // 返回房间列表
+}
+
+// 设置玩家准备状态
+lawnmower::S2C_SetReadyResult RoomManager::SetReady(
+    uint32_t player_id, const lawnmower::C2S_SetReady& request) {
+  lawnmower::S2C_SetReadyResult result; // 准备状态反馈
+  RoomUpdate update;
+  bool need_broadcast = false; // 设定是否需要广播变量
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_); // 互斥锁
+    auto mapping = player_room_.find(player_id);
+    if (mapping == player_room_.end()) {
+      result.set_success(false);
+      result.set_message_ready("玩家未在房间");
+      return result;
+    }
+
+    auto room_it = rooms_.find(mapping->second);
+    if (room_it == rooms_.end()) {
+      player_room_.erase(mapping);
+      result.set_success(false);
+      result.set_message_ready("房间不存在");
+      return result;
+    }
+
+    Room& room = room_it->second;
+    auto player_it = std::find_if(room.players.begin(), room.players.end(),
+                                  [player_id](const RoomPlayer& player) 
+                                  { return player.player_id == player_id; });
+    if (player_it == room.players.end()) {
+      player_room_.erase(mapping);
+      result.set_success(false);
+      result.set_message_ready("玩家未在房间");
+      return result;
+    }
+
+    if (room.is_playing) {
+      result.set_success(false);
+      result.set_room_id(room.room_id);
+      result.set_is_ready(player_it->is_ready);
+      result.set_message_ready("游戏中无法切换准备状态");
+      return result;
+    }
+
+    player_it->is_ready = request.is_ready();
+    result.set_success(true);
+    result.set_room_id(room.room_id);
+    result.set_is_ready(player_it->is_ready);
+    result.set_message_ready(player_it->is_ready ? "已准备" : "已取消准备");
+
+    update = BuildRoomUpdateLocked(room); // 房间信息变化
+    need_broadcast = true; // 需要广播
+  }
+
+  if (need_broadcast) {
+    SendRoomUpdate(update); // 广播更新后的房间信息
+    spdlog::info("玩家 {} {}房间 {}", player_id,
+                 request.is_ready() ? "准备" : "取消准备",
+                 update.message.room_id());
+  }
+
+  return result;
+}
+
 // 移除加入房间的用户,主要用于当用户主动与服务器断开连接而非主动退出房间
 void RoomManager::RemovePlayer(uint32_t player_id) {
   RoomUpdate update;

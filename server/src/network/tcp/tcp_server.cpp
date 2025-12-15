@@ -124,7 +124,7 @@ void TcpSession::do_write() {
 
 void TcpSession::handle_packet(const lawnmower::Packet& packet){
   using lawnmower::MessageType;
-
+  std::cout<<"包类型为："<<packet.msg_type()<<"\n";
   switch (packet.msg_type()){
     case MessageType::MSG_C2S_LOGIN: { // 登录
       lawnmower::C2S_Login login;
@@ -190,6 +190,20 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
       SendProto(MessageType::MSG_S2C_CREATE_ROOM_RESULT, result); // 发送创建房间反馈
       break;
     }
+    case MessageType::MSG_C2S_GET_ROOM_LIST: { // 获取房间列表
+      lawnmower::C2S_GetRoomList request; // 获取房间列表反馈
+      if (!request.ParseFromString(packet.payload())) {
+        spdlog::warn("解析房间列表请求失败");
+        break;
+      }
+
+      lawnmower::S2C_RoomList list;
+      if (player_id_ != 0) {
+        list = RoomManager::Instance().GetRoomList(); // 单例获取房间列表
+      }
+      SendProto(MessageType::MSG_S2C_ROOM_LIST, list); // 发送获取房间列表反馈
+      break;
+    }
     case MessageType::MSG_C2S_JOIN_ROOM: { // 加入房间请求
       lawnmower::C2S_JoinRoom request;
       if (!request.ParseFromString(packet.payload())) {
@@ -223,6 +237,23 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
         result = RoomManager::Instance().LeaveRoom(player_id_); // 单例离开房间
       }
       SendProto(MessageType::MSG_S2C_LEAVE_ROOM_RESULT, result); // 发送离开房间反馈
+      break;
+    }
+    case MessageType::MSG_C2S_SET_READY: { // 设置准备状态
+      lawnmower::C2S_SetReady request; // 设置准备状态反馈
+      if (!request.ParseFromString(packet.payload())) {
+        spdlog::warn("解析设置准备状态包体失败");
+        break;
+      }
+
+      lawnmower::S2C_SetReadyResult result;
+      if (player_id_ == 0) {
+        result.set_success(false);
+        result.set_message_ready("请先登录");
+      } else {
+        result = RoomManager::Instance().SetReady(player_id_, request); // 单列设置准备状态
+      }
+      SendProto(MessageType::MSG_S2C_SET_READY_RESULT, result); // 发送设置准备状态反馈
       break;
     }
     case MessageType::MSG_C2S_REQUEST_QUIT: { // 客户端主动断开连接

@@ -26,6 +26,8 @@ class RoomManager {
                                          const lawnmower::C2S_JoinRoom& request);
 
   lawnmower::S2C_LeaveRoomResult LeaveRoom(uint32_t player_id);
+  lawnmower::S2C_RoomList GetRoomList() const;
+  lawnmower::S2C_SetReadyResult SetReady(uint32_t player_id, const lawnmower::C2S_SetReady& request);
 
   // 断线清理，不返回离开结果
   void RemovePlayer(uint32_t player_id);
