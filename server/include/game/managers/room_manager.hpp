@@ -12,7 +12,7 @@ class TcpSession;
 // 房间管理器：负责创建/加入/离开房间以及广播房间成员变化
 class RoomManager {
  public:
-  static RoomManager& Instance();
+  static RoomManager& Instance(); // 单例模式，只有一个房间管理器
 
   RoomManager(const RoomManager&) = delete;
   RoomManager& operator=(const RoomManager&) = delete;
@@ -50,8 +50,8 @@ class RoomManager {
   };
 
   struct RoomUpdate {
-    lawnmower::S2C_RoomUpdate message;
-    std::vector<std::weak_ptr<TcpSession>> targets;
+    lawnmower::S2C_RoomUpdate message; // 房间信息结构： room_id , player 
+    std::vector<std::weak_ptr<TcpSession>> targets; // 保存房间里其他成员的weak_ptr供广播使用
   };
 
   RoomUpdate BuildRoomUpdateLocked(const Room& room) const;
@@ -61,6 +61,6 @@ class RoomManager {
 
   mutable std::mutex mutex_;
   uint32_t next_room_id_ = 1;
-  std::unordered_map<uint32_t, Room> rooms_;
-  std::unordered_map<uint32_t, uint32_t> player_room_;
+  std::unordered_map<uint32_t, Room> rooms_; // room_id - Room(room基本信息) （房间id对应房间信息)
+  std::unordered_map<uint32_t, uint32_t> player_room_; // player_id - room_id （玩家id对应房间id）
 };
