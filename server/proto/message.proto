@@ -38,6 +38,7 @@ enum MessageType{
   MSG_C2S_LEAVE_ROOM = 13; // 离开房间请求
   MSG_C2S_SET_READY = 14; // 设置准备状态请求
   MSG_C2S_START_GAME = 15; // 开始游戏请求
+  MSG_C2S_REQUEST_QUIT = 16; // 关闭连接请求
 
     // 服务器to客户端
   MSG_S2C_CREATE_ROOM_RESULT = 20; // 创建房间反馈

@@ -129,7 +129,14 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
       send_packet(packet_out);
       break;
     }
-    case MessageType::MSG_UNKNOWN:
+    case MessageType::MSG_C2S_REQUEST_QUIT: { // 客户端主动断开连接
+      spdlog::info("Client request disconnect");
+      asio::error_code ignored_ec;
+      socket_.shutdown(tcp::socket::shutdown_both,ignored_ec);
+      socket_.close(ignored_ec);
+      break;
+    }
+    case MessageType::MSG_UNKNOWN: // 未知类型
     default:
       spdlog::warn("Unhandled message type: {}", static_cast<int>(packet.msg_type()));
   }
