@@ -35,6 +35,9 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   uint32_t player_id_ = 0;
   std::string player_name_;
   static std::atomic<uint32_t> next_player_id_;
+  // 用于统计当前与服务器保持TCP连接且尚未关闭的客户端会话数
+  // 可以再调整口径，如统计已经登陆玩家或特定房间的玩家数量
+  static std::atomic<uint32_t> active_sessions_;
 };
 
 class TcpServer {

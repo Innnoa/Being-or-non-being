@@ -4,18 +4,27 @@
 #include <arpa/inet.h>
 #include <chrono>
 #include <cstring>
-#include <iostream>
 
 namespace {
 constexpr std::size_t kMaxPacketSize = 64 * 1024; // 设定最大包大小
+
+std::string MessageTypeToString(lawnmower::MessageType type) {
+  const std::string name = lawnmower::MessageType_Name(type);
+  if (!name.empty()) {
+    return name + "(" + std::to_string(static_cast<int>(type)) + ")";
+  }
+  return "UNKNOWN(" + std::to_string(static_cast<int>(type)) + ")";
+}
 }
 
 std::atomic<uint32_t> TcpSession::next_player_id_{1}; // 用于给palyer赋id,next_player_id_是静态的
+std::atomic<uint32_t> TcpSession::active_sessions_{0}; // 当前活跃会话数
 
 TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) { //构造函数
 }
 
 void TcpSession::start() { // public,入口函数
+  active_sessions_.fetch_add(1, std::memory_order_relaxed);
   read_header();
 }
 
@@ -44,13 +53,14 @@ void TcpSession::handle_disconnect() {
   asio::error_code ignored_ec;
   socket_.shutdown(tcp::socket::shutdown_both, ignored_ec);
   socket_.close(ignored_ec); // 关闭socket
+  active_sessions_.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void TcpSession::read_header() {
   auto self = shared_from_this(); // 获取自身的shared_ptr
   asio::async_read(socket_, asio::buffer(length_buffer_), // 先读packet长度,异步非阻塞
     [this, self](const asio::error_code& ec, std::size_t) {
-    std::cout<<"开始解析包长度\n";
+      spdlog::debug("开始读取包长度");
       if (ec) {
         spdlog::warn("读取包长度失败: {}", ec.message());
         handle_disconnect();
@@ -60,15 +70,15 @@ void TcpSession::read_header() {
       uint32_t net_len = 0;
       std::memcpy(&net_len, length_buffer_.data(), sizeof(net_len));
       const uint32_t body_len = ntohl(net_len);
-      std::cout<<"包长度: "<<body_len<<"\n";
+      spdlog::debug("收到包长度: {}", body_len);
       if (body_len == 0 || body_len > kMaxPacketSize) {
-        spdlog::warn("包的长度为空: {}", body_len);
+        spdlog::warn("包长度异常: {}", body_len);
         handle_disconnect();
         return;
       }
 
       read_buffer_.resize(body_len);
-      std::cout<<"解析包长度完成\n";
+      spdlog::debug("包长度解析完成，开始读取包体");
       
       read_body(body_len);
     }
@@ -78,8 +88,8 @@ void TcpSession::read_header() {
 void TcpSession::read_body(std::size_t length) {
   auto self = shared_from_this(); // 获取自身的shared_ptr
   asio::async_read(socket_, asio::buffer(read_buffer_, length), // 然后读具体报文
-    [this, self](const asio::error_code& ec, std::size_t) {
-      std::cout<<"开始解析包体\n";
+    [this, self, length](const asio::error_code& ec, std::size_t) {
+      spdlog::debug("开始解析包体，长度 {} bytes", length);
       if (ec) {
         spdlog::warn("解析包体失败: {}", ec.message());
         handle_disconnect();
@@ -88,11 +98,11 @@ void TcpSession::read_body(std::size_t length) {
 
       lawnmower::Packet packet;
       if (!packet.ParseFromArray(read_buffer_.data(), static_cast<int>(read_buffer_.size()))) {
-        spdlog::warn("解析protobuf数据包失败，大小为 {} bytes)", read_buffer_.size());
+        spdlog::warn("解析protobuf数据包失败，大小为 {} bytes", read_buffer_.size());
         read_header();
         return;
       }
-      std::cout<<"解析包体完成\n";
+      spdlog::debug("包体解析完成");
       handle_packet(packet);
       if (closed_ || !socket_.is_open()) { // 已经主动断开，不再继续读
         return;
@@ -121,7 +131,7 @@ void TcpSession::do_write() {
 
 void TcpSession::handle_packet(const lawnmower::Packet& packet){
   using lawnmower::MessageType;
-  std::cout<<"开始识别包类型，类型为："<<packet.msg_type()<<"\n";
+  spdlog::debug("开始处理消息 {}", MessageTypeToString(packet.msg_type()));
   switch (packet.msg_type()){
     case MessageType::MSG_C2S_LOGIN: { // 登录
       lawnmower::C2S_Login login;
@@ -164,7 +174,7 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
           std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::system_clock::now().time_since_epoch()).count());
       reply.set_timestamp(now_ms);
-      reply.set_online_players(1); // 当前房间内游戏中玩家个数
+      reply.set_online_players(active_sessions_.load(std::memory_order_relaxed)); // 当前在线会话数
 
       SendProto(MessageType::MSG_S2C_HEARTBEAT, reply); // 发送心跳反馈
       break;
@@ -198,7 +208,7 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
       if (player_id_ != 0) {
         list = RoomManager::Instance().GetRoomList(); // 单例获取房间列表
       }
-      std::cout<<"发送房间列表\n";
+      spdlog::debug("发送房间列表给玩家 {}", player_id_);
       SendProto(MessageType::MSG_S2C_ROOM_LIST, list); // 发送获取房间列表反馈
       break;
     }
@@ -261,10 +271,9 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet){
     }
     case MessageType::MSG_UNKNOWN: // 未知类型
     default:
-      spdlog::warn("未知操作类型: {}", static_cast<int>(packet.msg_type()));
+      spdlog::warn("未知操作类型: {}", MessageTypeToString(packet.msg_type()));
   }
-  std::cout<<"解析包类型完成\n";
-  std::cout<<"=========================\n";
+  spdlog::debug("完成处理消息 {}", MessageTypeToString(packet.msg_type()));
 }
 
 void TcpSession::send_packet(const lawnmower::Packet& packet){ // 发包
