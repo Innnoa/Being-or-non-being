@@ -1,4 +1,0 @@
-/home/toast/LawnMowerGame/server/build-clang/CMakeFiles/proto_lib.dir
-/home/toast/LawnMowerGame/server/build-clang/CMakeFiles/server.dir
-/home/toast/LawnMowerGame/server/build-clang/CMakeFiles/edit_cache.dir
-/home/toast/LawnMowerGame/server/build-clang/CMakeFiles/rebuild_cache.dir

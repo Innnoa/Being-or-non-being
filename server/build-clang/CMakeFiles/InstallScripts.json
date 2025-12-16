@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/toast/LawnMowerGame/server/build-clang/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
