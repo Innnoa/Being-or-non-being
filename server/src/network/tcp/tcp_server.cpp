@@ -5,6 +5,7 @@
 #include <cstring>
 #include <spdlog/spdlog.h>
 
+#include "game/managers/game_manager.hpp"
 #include "game/managers/room_manager.hpp"
 
 namespace {
@@ -16,6 +17,16 @@ std::string MessageTypeToString(lawnmower::MessageType type) {
     return name + "(" + std::to_string(static_cast<int>(type)) + ")";
   }
   return "UNKNOWN(" + std::to_string(static_cast<int>(type)) + ")";
+}
+
+void BroadcastToRoom(const std::vector<std::weak_ptr<TcpSession>>& sessions,
+                     lawnmower::MessageType type,
+                     const google::protobuf::Message& message) {
+  for (const auto& weak_session : sessions) {
+    if (auto session = weak_session.lock()) {
+      session->SendProto(type, message);
+    }
+  }
 }
 }  // namespace
 
@@ -52,6 +63,7 @@ void TcpSession::handle_disconnect() {
   closed_ = true;  // 已经主动断开
 
   if (player_id_ != 0) {  // 若存在player,则移除加入房间中的用户
+    GameManager::Instance().RemovePlayer(player_id_);
     RoomManager::Instance().RemovePlayer(player_id_);
   }
 
@@ -283,6 +295,61 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
     case MessageType::MSG_C2S_REQUEST_QUIT: {  // 客户端主动断开连接
       spdlog::info("客户端请求断开连接");
       handle_disconnect();
+      break;
+    }
+    case MessageType::MSG_C2S_START_GAME: {  // 房主请求开始游戏
+      lawnmower::C2S_StartGame request;
+      if (!request.ParseFromString(packet.payload())) {
+        spdlog::warn("解析开始游戏请求失败");
+        break;
+      }
+
+      lawnmower::S2C_GameStart result;
+      auto snapshot =
+          RoomManager::Instance().TryStartGame(player_id_, &result);
+      if (!result.success()) {
+        SendProto(MessageType::MSG_S2C_GAME_START, result);
+        break;
+      }
+
+      const lawnmower::SceneInfo scene_info =
+          GameManager::Instance().CreateScene(*snapshot);
+      *result.mutable_scene() = scene_info;
+
+      const auto sessions =
+          RoomManager::Instance().GetRoomSessions(snapshot->room_id);
+      BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_START, result);
+
+      lawnmower::S2C_GameStateSync sync;
+      if (GameManager::Instance().BuildFullState(snapshot->room_id, &sync)) {
+        BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+      }
+      spdlog::info("房间 {} 游戏开始", snapshot->room_id);
+      break;
+    }
+    case MessageType::MSG_C2S_PLAYER_INPUT: {  // 玩家输入（移动/攻击）
+      lawnmower::C2S_PlayerInput input;
+      if (!input.ParseFromString(packet.payload())) {
+        spdlog::warn("解析玩家输入失败");
+        break;
+      }
+
+      if (player_id_ == 0) {
+        spdlog::warn("未登录玩家发送移动输入");
+        break;
+      }
+
+      // 服务器侧强制使用会话的 player_id，防止伪造
+      input.set_player_id(player_id_);
+
+      lawnmower::S2C_GameStateSync sync;
+      uint32_t room_id = 0;
+      if (GameManager::Instance().HandlePlayerInput(player_id_, input, &sync,
+                                                    &room_id)) {
+        const auto sessions =
+            RoomManager::Instance().GetRoomSessions(room_id);
+        BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+      }
       break;
     }
     case MessageType::MSG_UNKNOWN:  // 未知类型

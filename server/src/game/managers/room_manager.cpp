@@ -1,6 +1,7 @@
 #include "game/managers/room_manager.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <spdlog/spdlog.h>
 
 #include "network/tcp/tcp_server.hpp"
@@ -272,6 +273,110 @@ void RoomManager::RemovePlayer(uint32_t player_id) {
   if (need_broadcast) {
     SendRoomUpdate(update);  // 广播更新
   }
+}
+
+std::optional<RoomManager::RoomSnapshot> RoomManager::TryStartGame(
+    uint32_t player_id, lawnmower::S2C_GameStart* result) {
+  if (result == nullptr) {
+    return std::nullopt;
+  }
+
+  RoomSnapshot snapshot;
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto mapping = player_room_.find(player_id);
+  if (mapping == player_room_.end()) {
+    result->set_success(false);
+    result->set_message_start("玩家未在房间中");
+    return std::nullopt;
+  }
+
+  auto room_it = rooms_.find(mapping->second);
+  if (room_it == rooms_.end()) {
+    player_room_.erase(mapping);
+    result->set_success(false);
+    result->set_message_start("房间不存在");
+    return std::nullopt;
+  }
+
+  Room& room = room_it->second;
+  result->set_room_id(room.room_id);
+
+  const auto requester_it =
+      std::find_if(room.players.begin(), room.players.end(),
+                   [player_id](const RoomPlayer& player) {
+                     return player.player_id == player_id;
+                   });
+  if (requester_it == room.players.end()) {
+    player_room_.erase(mapping);
+    result->set_success(false);
+    result->set_message_start("玩家未在房间中");
+    return std::nullopt;
+  }
+
+  if (!requester_it->is_host) {
+    result->set_success(false);
+    result->set_message_start("只有房主可以开始游戏");
+    return std::nullopt;
+  }
+
+  if (room.is_playing) {
+    result->set_success(false);
+    result->set_message_start("房间已在游戏中");
+    return std::nullopt;
+  }
+
+  const bool all_ready = std::all_of(
+      room.players.begin(), room.players.end(),
+      [](const RoomPlayer& player) { return player.is_host || player.is_ready; });
+  if (!all_ready) {
+    result->set_success(false);
+    result->set_message_start("存在未准备的玩家");
+    return std::nullopt;
+  }
+
+  room.is_playing = true;
+  for (auto& player : room.players) {
+    player.is_ready = false;
+  }
+
+  snapshot.room_id = room.room_id;
+  snapshot.is_playing = room.is_playing;
+  snapshot.players.reserve(room.players.size());
+  for (const auto& player : room.players) {
+    RoomPlayerSnapshot player_snapshot;
+    player_snapshot.player_id = player.player_id;
+    player_snapshot.player_name = player.player_name;
+    player_snapshot.is_host = player.is_host;
+    player_snapshot.session = player.session;
+    snapshot.players.push_back(std::move(player_snapshot));
+  }
+
+  const auto now_ms = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  result->set_start_time(now_ms);
+  result->set_success(true);
+  result->set_message_start("游戏开始");
+
+  return snapshot;
+}
+
+std::vector<std::weak_ptr<TcpSession>> RoomManager::GetRoomSessions(
+    uint32_t room_id) const {
+  std::vector<std::weak_ptr<TcpSession>> sessions;
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto room_it = rooms_.find(room_id);
+  if (room_it == rooms_.end()) {
+    return sessions;
+  }
+
+  sessions.reserve(room_it->second.players.size());
+  for (const auto& player : room_it->second.players) {
+    sessions.push_back(player.session);
+  }
+  return sessions;
 }
 
 // 更新房间基本信息

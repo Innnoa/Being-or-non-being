@@ -17,6 +17,15 @@ message Timestamp {
   uint32 tick = 2; // 游戏帧编号
 }
 
+// 场景信息
+message SceneInfo {
+  uint32 scene_id = 1;     // 场景/关卡ID，默认与房间ID一致
+  uint32 width = 2;        // 场景宽度（像素）
+  uint32 height = 3;       // 场景高度（像素）
+  uint32 tick_rate = 4;    // 逻辑帧率（帧/秒）
+  uint32 state_sync_rate = 5; // 状态同步频率（次/秒）
+}
+
 // =============================
 // 消息类型枚举
 // =============================
@@ -182,6 +191,9 @@ message S2C_RoomUpdate {
 message S2C_GameStart {
   uint32 room_id = 1; // 房间id
   uint64 start_time = 2; // 游戏开始时间戳
+  bool success = 3; // 是否开始成功（失败则仅回给发起者）
+  string message_start = 4; // 开始结果说明
+  SceneInfo scene = 5; // 场景信息（开始成功时有效）
 }
 
 // =============================
@@ -208,6 +220,7 @@ message PlayerState {
     bool has_buff = 14;            // 是否有灌注/增益效果
     uint32 buff_id = 15;           // Buff ID（0 表示无）
     uint32 attack_speed = 16;       // 攻击速度（数值越大越快，或表示攻击间隔 ms）
+    float move_speed = 17;          // 移动速度（像素/秒）
 }
 
 // 射弹信息（如豌豆、子弹）
@@ -248,6 +261,8 @@ message C2S_PlayerInput {
     Vector2 move_direction = 2;    // 移动方向（归一化向量）
     bool is_attacking = 3;         // 是否正在攻击
     Timestamp input_time = 4;      // 输入时间戳（用于延迟补偿）
+    uint32 input_seq = 5;          // 输入序号（客户端递增，用于去重/乱序处理）
+    uint32 delta_ms = 6;           // 距上一次输入的时间间隔（ms，客户端估算，0 表示未知）
 }
 
 // --------------服务器->客户端--------------
@@ -258,6 +273,7 @@ message S2C_GameStateSync {
   repeated PlayerState players = 2;            // 变化的玩家状态,容器
   repeated EnemyState enemies = 3;             // 变化的敌人状态,容器
   repeated ItemState items = 4;                // 道具状态（如新掉落或被拾取）,容器
+  uint32 room_id = 5;                          // 所属房间ID（便于客户端路由/校验）
 }
 
 // 玩家受伤广播
