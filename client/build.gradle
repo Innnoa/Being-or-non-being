@@ -5,6 +5,8 @@ allprojects {
         gdxVersion = '1.11.0'
         nettyVersion = '4.1.100.Final'
         protobufVersion = '3.20.1'
+        slf4jVersion = '2.0.9'          // ← 新增：SLF4J 版本
+        logbackVersion = '1.4.11'       // ← 新增：Logback 版本
         jvmVersion = '17'
     }
 
@@ -28,10 +30,9 @@ allprojects {
         maven { url "https://maven.aliyun.com/repository/public/" }
     }
 
-    // 全局强制 UTF-8 编码（解决中文乱码核心！）
     tasks.withType(JavaCompile) {
         options.encoding = 'UTF-8'
-        options.compilerArgs << '-Xlint:none' // 关闭无关警告
+        options.compilerArgs << '-Xlint:none'
     }
 }
 
@@ -39,12 +40,22 @@ project(":desktop") {
     apply plugin: "java-library"
     apply plugin: "application"
 
+    // 新增：配置资源目录（关键！）
+    sourceSets.main {
+        java.srcDirs = ["src"]
+        resources.srcDirs = ["../assets"]  // ← 指向项目根目录下的 assets/
+    }
     dependencies {
         implementation project(":core")
         api "com.badlogicgames.gdx:gdx-backend-lwjgl3:$gdxVersion"
         api "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop"
-        // 兜底：desktop 直接引入 Protobuf（避免依赖传递失败）
         implementation "com.google.protobuf:protobuf-java:$protobufVersion"
+
+        // FreeType 桌面 native 依赖
+        api "com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-desktop"
+
+        // Logback 实现（仅 desktop）
+        runtimeOnly "ch.qos.logback:logback-classic:$logbackVersion"
     }
 
     application {
@@ -61,19 +72,20 @@ project(":desktop") {
 project(":core") {
     apply plugin: "java-library"
 
-
     dependencies {
         api "com.badlogicgames.gdx:gdx:$gdxVersion"
         implementation "io.netty:netty-all:$nettyVersion"
-        // 改为 api 让依赖传递到 desktop 模块！
         api "com.google.protobuf:protobuf-java:$protobufVersion"
+
+        // SLF4J API（所有平台通用）
+        api "org.slf4j:slf4j-api:$slf4jVersion"
+
+        // 新增：FreeType 核心 API
+        api "com.badlogicgames.gdx:gdx-freetype:$gdxVersion"
     }
-
-
 
     java {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
 }
