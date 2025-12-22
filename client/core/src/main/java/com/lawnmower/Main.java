@@ -31,21 +31,21 @@ public class Main extends Game {
         //使用自定义 PVZ 风格皮肤
         skin = PvzSkin.create();
 
-//        // 初始化 TCP 客户端（连接本地服务器）
-//        try {
-//            tcpClient = new TcpClient();
-//            tcpClient.connect(Config.SERVER_HOST, Config.SERVER_PORT);
-//            log.info("Connected to server {}:{}", Config.SERVER_HOST, Config.SERVER_PORT);
-//            setScreen(new RoomListScreen(Main.this, skin));
-//            // 启动网络监听线程
-//            startNetworkThread();
-//        } catch (IOException e) {
-//            log.error("Failed to connect to server", e);
-//            // 可选：弹出错误对话框或进入离线模式
-//        }
+        // 初始化 TCP 客户端（连接本地服务器）
+        try {
+            tcpClient = new TcpClient();
+            tcpClient.connect(Config.SERVER_HOST, Config.SERVER_PORT);
+            log.info("Connected to server {}:{}", Config.SERVER_HOST, Config.SERVER_PORT);
+            setScreen(new RoomListScreen(Main.this, skin));
+            // 启动网络监听线程
+            startNetworkThread();
+        } catch (IOException e) {
+            log.error("Failed to connect to server", e);
+            // 可选：弹出错误对话框或进入离线模式
+        }
 
         // 设置初始屏幕为主菜单
-        setScreen(new GameRoomScreen(this, skin));
+        setScreen(new MainMenuScreen(this, skin));
     }
 
     private void startNetworkThread() {

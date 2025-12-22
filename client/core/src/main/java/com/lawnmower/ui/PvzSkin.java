@@ -6,6 +6,7 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.PixmapPacker;
 import com.badlogic.gdx.graphics.g2d.Sprite;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator;
@@ -13,6 +14,8 @@ import com.badlogic.gdx.scenes.scene2d.ui.*;
 import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.scenes.scene2d.utils.SpriteDrawable;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
+
+import java.nio.charset.StandardCharsets;
 
 public class PvzSkin {
     private static Texture createColoredTexture(Color color) {
@@ -30,194 +33,60 @@ public class PvzSkin {
 
     public static Skin create() {
         Skin skin = new Skin();
-
-        // 在代码中动态生成常用汉字范围（避免文件太大）
-        // 读取字符集文件（UTF-8）
+        //注册 white 纹理
+        skin.add("white", createColoredTexture(Color.WHITE));
         FileHandle charFile = Gdx.files.internal("fonts/chars.txt");
         String characters = charFile.readString(); // 自动按 UTF-8 读取
-
-
-        // 无参构造 → 加载内置默认字体（仅支持ASCII，中英混合需方案2）
         BitmapFont defaultFont = new BitmapFont();
         defaultFont.getData().setScale(3f);
         skin.add("system-default-font", defaultFont);
-        // === 1. 先加载中文字体（唯一一次！）===
-        FileHandle fontFile = Gdx.files.internal("fonts/pvz.ttf"); // 支持中文
-        BitmapFont font = getFont(fontFile,characters,40);
-        // === 2. 注册字体 ===
-        skin.add("default-font", font);
-        /**
-         * 第二个字体
-         */
-        FileHandle fontCuteFile = Gdx.files.internal("fonts/pvz_cute.ttf"); // 支持中文
-        BitmapFont fontCute_36 = getFont(fontCuteFile, characters,40);
-
-        skin.add("default-font-cute-36", fontCute_36);
-
-        FileHandle fontCuteFile_50 = Gdx.files.internal("fonts/pvz_cute.ttf"); // 支持中文
-        BitmapFont fontCute_50 = getFont(fontCuteFile_50, characters,44);
-        skin.add("default-font-cute-50", fontCute_50);
-
-        FileHandle fontCuteFile_32 = Gdx.files.internal("fonts/pvz_cute.ttf"); // 支持中文
-        BitmapFont fontCute_32 = getFont(fontCuteFile_32, characters,32);
-        skin.add("default-font-cute-32", fontCute_32);
 
         /**
-         * 阿里巴巴惠普体
+         * 字体
          */
-        FileHandle huipu = Gdx.files.internal("fonts/huipu_pvz.ttf"); // 支持中文
-        BitmapFont huipu_font = getFont(huipu,50);
-        skin.add("huipu", huipu_font);
+        BitmapFont font = getFont(Gdx.files.internal("fonts/pvz.ttf"),characters,40);
 
-        // === 3. 注册 white 纹理（必须）===
-        Texture whiteTex = createColoredTexture(Color.WHITE);
-        skin.add("white", whiteTex);
+        BitmapFont fontCute_40 = getFont(Gdx.files.internal("fonts/pvz_cute.ttf"), characters,40);
 
-        Texture upTex = new Texture(Gdx.files.internal("ui/button/MainPage/MainPage_up.png"));
-        Texture downTex = new Texture(Gdx.files.internal("ui/button/MainPage/MainPage_down.png"));
+        BitmapFont fontCute_44 = getFont(Gdx.files.internal("fonts/pvz_cute.ttf"), characters,44);
+        
+        BitmapFont fontCute_32 = getFont(Gdx.files.internal("fonts/pvz_cute.ttf"), characters,32);
 
-        Drawable upDrawable = new TextureRegionDrawable(new TextureRegion(upTex));
-        Drawable downDrawable = new TextureRegionDrawable(new TextureRegion(downTex));
-
-
-        // === 3. 创建按钮样式 ===
-        TextButton.TextButtonStyle buttonStyle_first = new TextButton.TextButtonStyle();
-        buttonStyle_first.up = upDrawable;
-        buttonStyle_first.down = downDrawable;
-        buttonStyle_first.font = font;
-        buttonStyle_first.fontColor = Color.BLACK;
-
-        // 注册为 "concrete" 样式（名字可自定义）
-        skin.add("MainPage", buttonStyle_first);
-
+        BitmapFont huipu_font = getFont(Gdx.files.internal("fonts/huipu_pvz.ttf"),50);
         /**
-         * roomList
+         * 按钮
          */
-        Texture upRoomList = new Texture(Gdx.files.internal("ui/button/RoomList/roomListButton_on.png"));
-        Texture downRoomList = new Texture(Gdx.files.internal("ui/button/RoomList/roomListButton_down.png"));
+        skin.add("MainPage", getTextButtonStyle(font,"ui/button/MainPage/MainPage_up.png","ui/button/MainPage/MainPage_down.png"));
 
-        Drawable upRoomList_Drawable= new TextureRegionDrawable(new TextureRegion(upRoomList));
-        Drawable downRoomList_Drawable = new TextureRegionDrawable(new TextureRegion(downRoomList));
+        skin.add("RoomList",getTextButtonStyle(fontCute_40,"ui/button/RoomList/roomListButton_on.png","ui/button/RoomList/roomListButton_down.png"));
 
+        skin.add("RoomList_def", getTextButtonStyle(defaultFont,"ui/button/RoomList/roomListButton_on.png","ui/button/RoomList/roomListButton_down.png"));
 
-        // === 3. 创建按钮样式 ===
-        TextButton.TextButtonStyle buttonStyle_RoomList = new TextButton.TextButtonStyle();
-        buttonStyle_RoomList.up = upRoomList_Drawable;
-        buttonStyle_RoomList.down = downRoomList_Drawable;
-        buttonStyle_RoomList.font = fontCute_36;
-        buttonStyle_RoomList.fontColor = Color.BLACK;
+        skin.add("PapperButton", getTextButtonStyle(font,"ui/button/PapperButton/paperButton_on.png","ui/button/PapperButton/paperButton_down.png"));
 
-        // 注册为 "concrete" 样式（名字可自定义）
-        skin.add("RoomList", buttonStyle_RoomList);
+        skin.add("CreateButton", getTextButtonStyle(fontCute_40,"ui/button/createRoomButton/createButton_on.png","ui/button/createRoomButton/createButton_down.png"));
 
-        // === 3. 创建按钮样式 ===
-        TextButton.TextButtonStyle buttonStyle_RoomList_def = new TextButton.TextButtonStyle();
-        buttonStyle_RoomList_def.up = upRoomList_Drawable;
-        buttonStyle_RoomList_def.down = downRoomList_Drawable;
-        buttonStyle_RoomList_def.fontColor = Color.BLACK;
-        buttonStyle_RoomList_def.font = defaultFont;
-        skin.add("RoomList_def", buttonStyle_RoomList_def);
-
+        skin.add("default", new TextButton.TextButtonStyle(getTextButtonStyle(font,"ui/button/MainPage/MainPage_up.png","ui/button/MainPage/MainPage_down.png")));
         /**
-         * paperButton
+         * 输入框
          */
-        Texture upPapperButton = new Texture(Gdx.files.internal("ui/button/PapperButton/paperButton_on.png"));
-        Texture downPaperButton = new Texture(Gdx.files.internal("ui/button/PapperButton/paperButton_down.png"));
+        skin.add("TextField", getTextFieldStyle(font, skin,"ui/input/editbox.png"));
 
-        Drawable upPapperButton_Drawable= new TextureRegionDrawable(new TextureRegion(upPapperButton));
-        Drawable downPapperButton_Drawable = new TextureRegionDrawable(new TextureRegion(downPaperButton));
-
-
-        // === 3. 创建按钮样式 ===
-        TextButton.TextButtonStyle buttonStyle_PapperButton = new TextButton.TextButtonStyle();
-        buttonStyle_PapperButton.up = upPapperButton_Drawable;
-        buttonStyle_PapperButton.down = downPapperButton_Drawable;
-        buttonStyle_PapperButton.font = font;
-        buttonStyle_PapperButton.fontColor = Color.BLACK;
-
-        // 注册为 "concrete" 样式（名字可自定义）
-        skin.add("PapperButton", buttonStyle_PapperButton);
-
-        Texture upCreateButton = new Texture(Gdx.files.internal("ui/button/createRoomButton/createButton_on.png"));
-        Texture downCreateButton = new Texture(Gdx.files.internal("ui/button/createRoomButton/createButton_down.png"));
-
-        Drawable upCreateButton_Drawable= new TextureRegionDrawable(new TextureRegion(upCreateButton));
-        Drawable downCreateButton_Drawable = new TextureRegionDrawable(new TextureRegion(downCreateButton));
-
-
-        // === 3. 创建按钮样式 ===
-        TextButton.TextButtonStyle buttonStyle_CreateButton = new TextButton.TextButtonStyle();
-        buttonStyle_CreateButton.up = upCreateButton_Drawable;
-        buttonStyle_CreateButton.down = downCreateButton_Drawable;
-        buttonStyle_CreateButton.font = fontCute_36;
-        buttonStyle_CreateButton.fontColor = Color.BLACK;
-        skin.add("CreateButton", buttonStyle_CreateButton);
-
-
-
-        TextButton.TextButtonStyle defaultButtonStyle = new TextButton.TextButtonStyle(buttonStyle_first);
-        skin.add("default", defaultButtonStyle);
-
-
-        // 为输入框准备背景纹理
-        Texture backgroundTexture = new Texture(Gdx.files.internal("ui/input/editbox.png")); // 替换为你的背景图片路径
-        Drawable backgroundDrawable = new TextureRegionDrawable(new TextureRegion(backgroundTexture));
-
-        // 创建TextField样式，并设置背景
-        TextField.TextFieldStyle textFieldStyleWithBackground = new TextField.TextFieldStyle();
-        textFieldStyleWithBackground.font = font;        // 使用之前加载的字体
-        textFieldStyleWithBackground.fontColor = Color.WHITE;
-        textFieldStyleWithBackground.background = backgroundDrawable; // 设置背景
-        textFieldStyleWithBackground.cursor = skin.newDrawable("white", Color.WHITE); // 光标
-        skin.add("TextField", textFieldStyleWithBackground); // 注册新样式，"backgrounded" 是这个样式的名称
+        skin.add("default", getTextFieldStyle(font, skin));
         /**
-         * 创建滑动选择器
+         * 滑动选择器
          */
-        // 1. 加载进度条背景/滑块纹理（替换为你的PVZ风格资源）
-        Texture sliderBgTex = new Texture(Gdx.files.internal("ui/slider/slider_strip.png")); // 进度条背景（4段长度）
-        Texture sliderKnobTex = new Texture(Gdx.files.internal("ui/slider/slider_piece.png")); // 滑块（圆形/方形）
+        skin.add("step-slider-style", getSliderStyle("ui/slider/slider_strip.png","ui/slider/slider_piece.png"));
+        /**
+         * 标签
+         */
+        skin.add("default_32", getLabelDefault(fontCute_32));
 
-        Drawable sliderBg = new TextureRegionDrawable(new TextureRegion(sliderBgTex));
-        Drawable sliderKnob = new TextureRegionDrawable(new TextureRegion(sliderKnobTex));
+        skin.add("default_36", getLabelDefault(fontCute_40));
 
-        // 2. 创建Slider样式
-        Slider.SliderStyle sliderStyle = new Slider.SliderStyle();
-        sliderStyle.background = sliderBg;          // 进度条背景
-        sliderStyle.knob = sliderKnob;              // 滑块
-        sliderStyle.knobBefore = sliderBg;          // 已选中部分的填充（可换不同纹理）
-        skin.add("step-slider-style", sliderStyle);
+        skin.add("default", getLabelDefault(fontCute_44));
 
-        // TextField
-        var textFieldStyle = new TextField.TextFieldStyle();
-        textFieldStyle.font = font;        // ← 关键
-        textFieldStyle.fontColor = Color.WHITE;
-        textFieldStyle.background = createColoredDrawable(Color.valueOf("555555"));
-        textFieldStyle.cursor = skin.newDrawable("white", Color.WHITE); // 光标
-        skin.add("default", textFieldStyle);
-
-        Label.LabelStyle labelStyle = new Label.LabelStyle();
-        labelStyle.font = fontCute_50;
-        labelStyle.fontColor = Color.BLACK;
-        labelStyle.background = null;
-        skin.add("default", labelStyle);
-
-        Label.LabelStyle labelStyle_32 = new Label.LabelStyle();
-        labelStyle_32.font = fontCute_32;
-        labelStyle_32.fontColor = Color.BLACK;
-        labelStyle_32.background = null;
-        skin.add("default_32", labelStyle_32);
-
-        Label.LabelStyle labelStyle_36 = new Label.LabelStyle();
-        labelStyle_36.font = fontCute_36;
-        labelStyle_36.fontColor = Color.BLACK;
-        labelStyle_36.background = null;
-        skin.add("default_36", labelStyle_36);
-
-        Label.LabelStyle labelStyle_huipu = new Label.LabelStyle();
-        labelStyle_huipu.font = huipu_font;
-        labelStyle_huipu.fontColor = Color.BLACK;
-        labelStyle_huipu.background = null;
-        skin.add("default_huipu", labelStyle_huipu);
+        skin.add("default_huipu", getLabelDefault(huipu_font));
         // Window
         var windowStyle = new Window.WindowStyle();
         windowStyle.titleFont = font;
@@ -236,7 +105,6 @@ public class PvzSkin {
         // 注册为 "default"
         skin.add("default", scrollPaneStyle, ScrollPane.ScrollPaneStyle.class);
 
-
         // 然后在 SelectBoxStyle 中引用它
         var selectBoxStyle = new SelectBox.SelectBoxStyle();
         selectBoxStyle.font = font;
@@ -254,26 +122,144 @@ public class PvzSkin {
         skin.add("default", selectBoxStyle);
         return skin;
     }
+    /**
+     *
+     * @param font 传入字体
+     * @return
+     */
+    private static Label.LabelStyle getLabelDefault(BitmapFont font){
+        Label.LabelStyle labelStyle = new Label.LabelStyle();
+        labelStyle.font = font;
+        labelStyle.fontColor = Color.BLACK;
+        labelStyle.background = null;
+        return labelStyle;
+    };
+    /**
+     *
+     * @param strip 条
+     * @param piece 块
+     * @return
+     */
+    private static Slider.SliderStyle getSliderStyle(String strip,String piece) {
+        Texture sliderBgTex = new Texture(Gdx.files.internal(strip)); // 进度条背景（4段长度）
+        Texture sliderKnobTex = new Texture(Gdx.files.internal(piece)); // 滑块（圆形/方形）
 
+        Drawable sliderBg = new TextureRegionDrawable(new TextureRegion(sliderBgTex));
+        Drawable sliderKnob = new TextureRegionDrawable(new TextureRegion(sliderKnobTex));
+
+        // 2. 创建Slider样式
+        Slider.SliderStyle sliderStyle = new Slider.SliderStyle();
+        sliderStyle.background = sliderBg;          // 进度条背景
+        sliderStyle.knob = sliderKnob;              // 滑块
+        sliderStyle.knobBefore = sliderBg;          // 已选中部分的填充（可换不同纹理）
+        return sliderStyle;
+    }
+    /**
+     *
+     * @param font 字体
+     * @param skin 皮肤
+     * @param background 背景
+     * @return
+     */
+    private static TextField.TextFieldStyle getTextFieldStyle(BitmapFont font, Skin skin,String background) {
+        Texture backgroundTexture = new Texture(Gdx.files.internal(background)); // 替换为你的背景图片路径
+        Drawable backgroundDrawable = new TextureRegionDrawable(new TextureRegion(backgroundTexture));
+
+        // 创建TextField样式，并设置背景
+        TextField.TextFieldStyle textFieldStyleWithBackground = new TextField.TextFieldStyle();
+        textFieldStyleWithBackground.font = font;        // 使用之前加载的字体
+        textFieldStyleWithBackground.fontColor = Color.WHITE;
+        textFieldStyleWithBackground.background = backgroundDrawable; // 设置背景
+        textFieldStyleWithBackground.cursor = skin.newDrawable("white", Color.WHITE); // 光标
+        return textFieldStyleWithBackground;
+    }
+    /**
+     *
+     * @param font 字体
+     * @param skin 皮肤
+     * @return
+     */
+    private static TextField.TextFieldStyle getTextFieldStyle(BitmapFont font, Skin skin) {
+        var textFieldStyle = new TextField.TextFieldStyle();
+        textFieldStyle.font = font;        // ← 关键
+        textFieldStyle.fontColor = Color.WHITE;
+        textFieldStyle.background = createColoredDrawable(Color.valueOf("555555"));
+        textFieldStyle.cursor = skin.newDrawable("white", Color.WHITE); // 光标
+        return textFieldStyle;
+    }
+    /**
+     *
+     * @param font 字体
+     * @param up 没按
+     * @param down 按下去
+     * @return
+     */
+    private static TextButton.TextButtonStyle getTextButtonStyle(BitmapFont font ,String up,String down) {
+        Texture upTex = new Texture(Gdx.files.internal(up));
+        Texture downTex = new Texture(Gdx.files.internal(down));
+
+        Drawable upDrawable = new TextureRegionDrawable(new TextureRegion(upTex));
+        Drawable downDrawable = new TextureRegionDrawable(new TextureRegion(downTex));
+
+        TextButton.TextButtonStyle buttonStyle_first = new TextButton.TextButtonStyle();
+        buttonStyle_first.up = upDrawable;
+        buttonStyle_first.down = downDrawable;
+        buttonStyle_first.font = font;
+        buttonStyle_first.fontColor = Color.BLACK;
+        return buttonStyle_first;
+    }
+    /**
+     * @param fontCuteFile 字体文件
+     * @param characters 字符集
+     * @param size 字号
+     * @return 加载全部字符的字体
+     */
     private static BitmapFont getFont(FileHandle fontCuteFile, String characters , Integer size) {
         FreeTypeFontGenerator generator_Cute = new FreeTypeFontGenerator(fontCuteFile);
         FreeTypeFontGenerator.FreeTypeFontParameter param_Cute = new FreeTypeFontGenerator.FreeTypeFontParameter();
 
+        // 1. 核心修复：低版本兼容 - 用 PixmapPacker 配置大纹理尺寸
+        int textureSize = 4096; // 4096x4096 足够容纳所有字符
+        PixmapPacker packer = new PixmapPacker(textureSize, textureSize, Pixmap.Format.RGBA8888, 2, false);
+        param_Cute.packer = packer; // 绑定自定义打包器，指定大纹理尺寸
+
+        // 2. 保留关键配置（编码、渲染、数字集）
         param_Cute.size = size;
-        param_Cute.color = Color.WHITE;
-        param_Cute.characters = characters;
+        param_Cute.color = Color.BLACK; // 高对比度
+        param_Cute.borderWidth = 1;
+        param_Cute.borderColor = Color.BLACK; // 黑色边框增强辨识度
+        param_Cute.magFilter = Texture.TextureFilter.Nearest;
+        param_Cute.minFilter = Texture.TextureFilter.Nearest;
+        param_Cute.hinting = FreeTypeFontGenerator.Hinting.Full;
+
+        // 3. 半角+全角数字双保险（避免编码问题）
+        String halfWidthNum = "0123456789";
+        String fullWidthNum = "０１２３４５６７８９";
+        String finalChars = new String(
+                (characters + halfWidthNum + fullWidthNum).getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8
+        );
+        param_Cute.characters = finalChars;
+
+        // 4. 生成字体并处理打包器
         BitmapFont fontCute = generator_Cute.generateFont(param_Cute);
         generator_Cute.dispose();
+        packer.dispose(); // 释放打包器资源（关键，避免内存泄漏）
+
         return fontCute;
     }
-
+    /**
+     * @param fontCuteFile 字体文件
+     * @param size 字号
+     * @return 指定字符的字体
+     */
     private static BitmapFont getFont(FileHandle fontCuteFile,Integer size) {
         FreeTypeFontGenerator generator_Cute = new FreeTypeFontGenerator(fontCuteFile);
         FreeTypeFontGenerator.FreeTypeFontParameter param_Cute = new FreeTypeFontGenerator.FreeTypeFontParameter();
 
         param_Cute.size = size;
         param_Cute.color = Color.WHITE;
-        param_Cute.characters = "1234567890人简单普通困难炼狱";
+        param_Cute.characters = "!\\\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~人简单普通困难炼狱单多设置退出游戏创建房间返回第页";
         BitmapFont fontCute = generator_Cute.generateFont(param_Cute);
         generator_Cute.dispose();
         return fontCute;

@@ -133,14 +133,14 @@ public class RoomListScreen implements Screen {
         });
 
         // 页码信息标签（透明背景）
-        pageInfoLabel = new Label("第1页/共0页", skin,"default_32");
+        pageInfoLabel = new Label("第1页/共1页", skin,"default_32");
         pageInfoLabel.getStyle().font.getData().setScale(1.5f);
         pageInfoLabel.getStyle().background = null; // 透明背景
 
         // 标题标签
         titleLabel = new Label("房间列表", skin);
         titleLabel.getStyle().font.getData().setScale(2.5f);
-        titleLabel.setPosition(1050, 860);
+        titleLabel.setPosition(1050, 840);
         stage.addActor(titleLabel);
 
         // 布局：主按钮区域
@@ -178,11 +178,11 @@ public class RoomListScreen implements Screen {
         stage.addActor(nextPageBtn);
 
          //请求房间列表（取消注释启用）
-//         try {
-//             game.getTcpClient().sendGetRoomList();
-//         } catch (IOException e) {
-//             Gdx.app.error("NET", "请求房间列表失败", e);
-//         }
+         try {
+             game.getTcpClient().sendGetRoomList();
+         } catch (IOException e) {
+             Gdx.app.error("NET", "请求房间列表失败", e);
+         }
     }
 
     // ===== 分页核心方法 =====
@@ -365,13 +365,12 @@ public class RoomListScreen implements Screen {
                     return;
                 }
                 Gdx.app.log("CreateRoom", "名称: " + roomName + ", 人数: " + maxPlayers + ", 难度: " + stepSlider.getCurrentLabel());
-                // TODO: 发送网络请求
 
-//                try {
-//                            game.getTcpClient().sendCreateRoom(name, max);
-//                        } catch (IOException e) {
-//                            showError("网络错误");
-//                        }
+                try {
+                            game.getTcpClient().sendCreateRoom(roomName, maxPlayers);
+                        } catch (IOException e) {
+                            showError("网络错误");
+                        }
                 dropPopup.hide();
             }
         });
