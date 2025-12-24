@@ -177,12 +177,12 @@ public class RoomListScreen implements Screen {
         stage.addActor(pageInfoLabel);
         stage.addActor(nextPageBtn);
 
-         //请求房间列表（取消注释启用）
-         try {
-             game.getTcpClient().sendGetRoomList();
-         } catch (IOException e) {
-             Gdx.app.error("NET", "请求房间列表失败", e);
-         }
+//         //请求房间列表（取消注释启用）
+//         try {
+//             game.getTcpClient().sendGetRoomList();
+//         } catch (IOException e) {
+//             Gdx.app.error("NET", "请求房间列表失败", e);
+//         }
     }
 
     // ===== 分页核心方法 =====

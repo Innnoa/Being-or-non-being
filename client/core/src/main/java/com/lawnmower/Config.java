@@ -6,7 +6,7 @@ public final class Config {
 
     // =============== 网络配置 ===============
     /** 服务器地址（开发时用 localhost，发布时改 IP 或域名） */
-    public static final String SERVER_HOST = "192.168.74.244";
+    public static final String SERVER_HOST = "192.168.193.244";
 
     /** 服务器端口 */
     public static final int SERVER_PORT = 7777;

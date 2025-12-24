@@ -5,6 +5,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.scenes.scene2d.ui.Skin;
 import com.lawnmower.screens.GameRoomScreen;
+import com.lawnmower.screens.GameScreen;
 import com.lawnmower.screens.MainMenuScreen;
 import com.lawnmower.screens.RoomListScreen;
 import com.lawnmower.ui.PvzSkin;
@@ -31,21 +32,21 @@ public class Main extends Game {
         //使用自定义 PVZ 风格皮肤
         skin = PvzSkin.create();
 
-        // 初始化 TCP 客户端（连接本地服务器）
-        try {
-            tcpClient = new TcpClient();
-            tcpClient.connect(Config.SERVER_HOST, Config.SERVER_PORT);
-            log.info("Connected to server {}:{}", Config.SERVER_HOST, Config.SERVER_PORT);
-            setScreen(new RoomListScreen(Main.this, skin));
-            // 启动网络监听线程
-            startNetworkThread();
-        } catch (IOException e) {
-            log.error("Failed to connect to server", e);
-            // 可选：弹出错误对话框或进入离线模式
-        }
+//        // 初始化 TCP 客户端（连接本地服务器）
+//        try {
+//            tcpClient = new TcpClient();
+//            tcpClient.connect(Config.SERVER_HOST, Config.SERVER_PORT);
+//            log.info("Connected to server {}:{}", Config.SERVER_HOST, Config.SERVER_PORT);
+//            setScreen(new RoomListScreen(Main.this, skin));
+//            // 启动网络监听线程
+//            startNetworkThread();
+//        } catch (IOException e) {
+//            log.error("Failed to connect to server", e);
+//            // 可选：弹出错误对话框或进入离线模式
+//        }
 
         // 设置初始屏幕为主菜单
-        setScreen(new MainMenuScreen(this, skin));
+        setScreen(new RoomListScreen(this,skin));
     }
 
     private void startNetworkThread() {
@@ -73,7 +74,28 @@ public class Main extends Game {
                         case MSG_S2C_ROOM_UPDATE:
                             payload = Message.S2C_RoomUpdate.parseFrom(packet.getPayload());
                             break;
-                        // TODO: 添加其他消息类型
+                        case MSG_S2C_GAME_START:
+                            payload = Message.S2C_GameStart.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_GAME_STATE_SYNC:
+                            payload = Message.S2C_GameStateSync.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_PLAYER_HURT:
+                            payload = Message.S2C_PlayerHurt.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_ENEMY_DIED:
+                            payload = Message.S2C_EnemyDied.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_PLAYER_LEVEL_UP:
+                            payload = Message.S2C_PlayerLevelUp.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_DROPPED_ITEM:
+                            payload = Message.S2C_DroppedItem.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_GAME_OVER:
+                            payload = Message.S2C_GameOver.parseFrom(packet.getPayload());
+                            break;
+                        // 其他未来消息可继续添加
                         default:
                             Gdx.app.log("NET", "Unknown message type: " + type);
                             continue;
@@ -173,7 +195,32 @@ public class Main extends Game {
                         gameRoom.onRoomUpdate(update.getRoomId(), update.getPlayersList());
                     }
                     break;
+                case MSG_S2C_GAME_START:
+                    if (getScreen() instanceof com.lawnmower.screens.GameRoomScreen) {
+                        // 切换到游戏场景
+                        setScreen(new com.lawnmower.screens.GameScreen(Main.this));
+                    }
+                    break;
 
+                case MSG_S2C_GAME_STATE_SYNC:
+                    // 将同步数据转发给 GameScreen（如果当前是游戏界面）
+                    if (getScreen() instanceof com.lawnmower.screens.GameScreen gameScreen) {
+                        Message.S2C_GameStateSync sync = (Message.S2C_GameStateSync) message;
+                        gameScreen.onGameStateReceived(sync);
+                    }
+                    break;
+
+                case MSG_S2C_PLAYER_HURT:
+                case MSG_S2C_ENEMY_DIED:
+                case MSG_S2C_PLAYER_LEVEL_UP:
+                case MSG_S2C_DROPPED_ITEM:
+                case MSG_S2C_GAME_OVER:
+                    // 暂时只打日志，后续由 GameScreen 处理
+                    Gdx.app.log("GAME_EVENT", "Received game event: " + type);
+                    if (getScreen() instanceof com.lawnmower.screens.GameScreen gameScreen) {
+                        gameScreen.onGameEvent(type, message);
+                    }
+                    break;
                 default:
                     Gdx.app.log("NET", "Unhandled message type: " + type);
             }

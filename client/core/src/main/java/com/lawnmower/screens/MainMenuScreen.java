@@ -4,10 +4,15 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Screen;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.graphics.g2d.TextureRegion;
+import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.*;
+import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
+import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
+import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Scaling;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
 import com.lawnmower.Main;
@@ -152,10 +157,57 @@ public class MainMenuScreen implements Screen {
 
     public void showError(String message) {
         Gdx.app.postRunnable(() -> {
-            new Dialog("错误", skin)
-                    .text(message)
-                    .button("确定")
-                    .show(stage);
+            Window window = new Window("", skin);
+
+
+            // 设置背景
+            try {
+                Texture bgTexture = new Texture(Gdx.files.internal("background/speakBackground.png"));
+                window.setBackground(new TextureRegionDrawable(new TextureRegion(bgTexture)));
+            } catch (Exception e) {
+                Gdx.app.error("UI", "Failed to load dialog background", e);
+            }
+
+            window.setModal(true);
+            window.setMovable(false);
+            window.setResizable(false);
+
+            // === 点击窗口任意空白处关闭（包括背景）===
+            window.addListener(new ClickListener() {
+                @Override
+                public void clicked(InputEvent event, float x, float y) {
+                    // 只有当点击未被子控件消费时才会触发（TextButton 会拦截）
+                    window.remove();
+                }
+            });
+
+            // 内容
+            Table contentTable = new Table();
+            contentTable.pad(40);
+
+            Label messageLabel = new Label(message, skin);
+            messageLabel.setWrap(true);
+            messageLabel.setAlignment(Align.center);
+            messageLabel.setWidth(500);
+            Label messageLabel2 = new Label("      点击任意位置关闭...", skin);
+            messageLabel.setWrap(true);
+            messageLabel.setAlignment(Align.center);
+            messageLabel.setWidth(500);
+
+
+            contentTable.add(messageLabel).width(500).padBottom(30).row();
+            contentTable.add(messageLabel2).width(500).padBottom(30).row();
+
+            window.add(contentTable).expand().center();
+            window.pack();
+
+            // 居中
+            window.setPosition(
+                    1800,
+                    700
+            );
+
+            stage.addActor(window);
         });
     }
 

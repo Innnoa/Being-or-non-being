@@ -73,6 +73,12 @@ public class TcpClient {
         dos.write(data);
         dos.flush();
     }
+    // ====== 新增方法：发送玩家输入 ======
+    public void sendPlayerInput(Message.C2S_PlayerInput input) throws IOException {
+        // 注意：input 已包含 player_id、方向、攻击状态等
+        sendPacket(Message.MessageType.MSG_C2S_PLAYER_INPUT, input);
+    }
+
     public void sendPacket(Message.MessageType type, MessageLite payload) throws IOException {
         Message.Packet packet = Message.Packet.newBuilder()
                 .setMsgType(type)
