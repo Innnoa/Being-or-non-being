@@ -13,8 +13,17 @@ message Vector2 {
 }
 
 message Timestamp {
-    uint64 server_time = 1; // 服务器时间戳（ms）
-    uint32 tick = 2; // 游戏帧编号
+  uint64 server_time = 1; // 服务器时间戳（ms）
+  uint32 tick = 2; // 游戏帧编号
+}
+
+// 场景信息
+message SceneInfo {
+  uint32 scene_id = 1;     // 场景/关卡ID，默认与房间ID一致
+  uint32 width = 2;        // 场景宽度（像素）
+  uint32 height = 3;       // 场景高度（像素）
+  uint32 tick_rate = 4;    // 逻辑帧率（帧/秒）
+  uint32 state_sync_rate = 5; // 状态同步频率（次/秒）
 }
 
 // =============================
@@ -22,41 +31,42 @@ message Timestamp {
 // =============================
 
 enum MessageType{
-    MSG_UNKNOWN = 0; // 未知信息
+  MSG_UNKNOWN = 0; // 未知信息
 
-    // 登陆相关
-    MSG_C2S_LOGIN = 1; // C2S 登陆
-    MSG_S2C_LOGIN_RESULT = 2;  // S2C 登陆反馈
-    MSG_C2S_HEARTBEAT = 3; // C2S 心跳信息
-    MSG_S2C_HEARTBEAT = 4; // S2C 心跳信息
+  // 登陆相关
+  MSG_C2S_LOGIN = 1; // C2S 登陆
+  MSG_S2C_LOGIN_RESULT = 2;  // S2C 登陆反馈
+  MSG_C2S_HEARTBEAT = 3; // C2S 心跳信息
+  MSG_S2C_HEARTBEAT = 4; // S2C 心跳信息
 
-    // 房间相关
+  // 房间相关
     // 客户端to服务器
-    MSG_C2S_CREATE_ROOM = 10; // 创建房间请求
-    MSG_C2S_GET_ROOM_LIST = 11; // 获取房间列表请求
-    MSG_C2S_JOIN_ROOM = 12; // 加入房间请求
-    MSG_C2S_LEAVE_ROOM = 13; // 离开房间请求
-    MSG_C2S_SET_READY = 14; // 设置准备状态请求
-    MSG_C2S_START_GAME = 15; // 开始游戏请求
-    MSG_C2S_REQUEST_QUIT = 16; // 关闭连接请求
-
+  MSG_C2S_CREATE_ROOM = 10; // 创建房间请求
+  MSG_C2S_GET_ROOM_LIST = 11; // 获取房间列表请求
+  MSG_C2S_JOIN_ROOM = 12; // 加入房间请求
+  MSG_C2S_LEAVE_ROOM = 13; // 离开房间请求
+  MSG_C2S_SET_READY = 14; // 设置准备状态请求
+  MSG_C2S_START_GAME = 15; // 开始游戏请求
+  MSG_C2S_REQUEST_QUIT = 16; // 关闭连接请求
+	
     // 服务器to客户端
-    MSG_S2C_CREATE_ROOM_RESULT = 20; // 创建房间反馈
-    MSG_S2C_ROOM_LIST = 21; // 房间列表反馈
-    MSG_S2C_JOIN_ROOM_RESULT = 22; // 加入房间反馈
-    MSG_S2C_LEAVE_ROOM_RESULT = 23; // 离开房间反馈
-    MSG_S2C_ROOM_UPDATE = 25; // 房间信息更新（广播)
-    MSG_S2C_GAME_START = 26; // 游戏开始反馈 (广播)
+  MSG_S2C_CREATE_ROOM_RESULT = 20; // 创建房间反馈
+  MSG_S2C_ROOM_LIST = 21; // 房间列表反馈
+  MSG_S2C_JOIN_ROOM_RESULT = 22; // 加入房间反馈
+  MSG_S2C_LEAVE_ROOM_RESULT = 23; // 离开房间反馈
+  MSG_S2C_SET_READY_RESULT = 24; // 设置准备状态反馈
+  MSG_S2C_ROOM_UPDATE = 25; // 房间信息更新（广播)
+  MSG_S2C_GAME_START = 26; // 游戏开始反馈 (广播)
 
-    // 游戏相关
-    MSG_C2S_PLAYER_INPUT = 30; // C2S 玩家信息输入
-    MSG_S2C_GAME_STATE_SYNC = 40; // 广播：反馈游戏状态
-    MSG_S2C_PLAYER_HURT = 41; // 广播： 玩家受伤
-    MSG_S2C_ENEMY_DIED = 42; // 广播： 敌人死亡
-    MSG_S2C_PLAYER_LEVEL_UP = 43; // 广播： 玩家升级
-    MSG_S2C_DROPPED_ITEM = 44; // 广播： 掉落道具
-    MSG_S2C_GAME_OVER = 45; // 广播： 游戏结束
-}
+  // 游戏相关
+  MSG_C2S_PLAYER_INPUT = 30; // C2S 玩家信息输入
+  MSG_S2C_GAME_STATE_SYNC = 40; // 广播：反馈游戏状态
+  MSG_S2C_PLAYER_HURT = 41; // 广播： 玩家受伤
+  MSG_S2C_ENEMY_DIED = 42; // 广播： 敌人死亡
+  MSG_S2C_PLAYER_LEVEL_UP = 43; // 广播： 玩家升级
+  MSG_S2C_DROPPED_ITEM = 44; // 广播： 掉落道具
+  MSG_S2C_GAME_OVER = 45; // 广播： 游戏结束
+}   
 
 // =============================
 // 登陆相关信息
@@ -76,13 +86,13 @@ message S2C_LoginResult {
 
 // 客户端 -> 服务器： 心跳消息
 message C2S_Heartbeat {
-    uint64 timestamp = 1; // 时间戳
+  uint64 timestamp = 1; // 时间戳
 }
 
 // 服务器 -> 客户端： 心跳消息
 message S2C_Heartbeat {
-    uint64 timestamp = 1; // 时间戳
-    uint32 online_players = 2; // 在线玩家个数
+  uint64 timestamp = 1; // 时间戳
+  uint32 online_players = 2; // 在线玩家个数
 }
 
 // =============================
@@ -91,28 +101,28 @@ message S2C_Heartbeat {
 
 // 房间信息
 message RoomInfo {
-    uint32 room_id = 1; // 房间id
-    string room_name = 2; // 房间名
-    uint32 current_players = 3; // 当前玩家数
-    uint32 max_players = 4; // 最大玩家数
-    bool is_playing = 5; // 是否游戏中
-    string host_name = 6; // 房主名称
+  uint32 room_id = 1; // 房间id
+  string room_name = 2; // 房间名
+  uint32 current_players = 3; // 当前玩家数
+  uint32 max_players = 4; // 最大玩家数
+  bool is_playing = 5; // 是否游戏中
+  string host_name = 6; // 房主名称
 }
 
 // 房间内玩家信息
 message PlayerInfo {
-    uint32 player_id = 1; // 玩家id
-    string player_name = 2; // 玩家姓名
-    bool is_ready = 3; // 是否准备
-    bool is_host = 4; // 是否房主
+  uint32 player_id = 1; // 玩家id
+  string player_name = 2; // 玩家姓名
+  bool is_ready = 3; // 是否准备
+  bool is_host = 4; // 是否房主
 }
 
 // --------------客户端->服务器--------------
 
 // 创建房间请求
 message C2S_CreateRoom {
-    string room_name = 1; // 房间名
-    uint32 max_players = 2; // 最大玩家数量
+  string room_name = 1; // 房间名
+  uint32 max_players = 2; // 最大玩家数量
 }
 
 // 获取房间列表请求
@@ -121,7 +131,7 @@ message C2S_GetRoomList {
 
 // 加入房间请求
 message C2S_JoinRoom {
-    uint32 room_id = 1; //房间id
+  uint32 room_id = 1; //房间id
 }
 
 // 离开房间请求
@@ -130,7 +140,7 @@ message C2S_LeaveRoom {
 
 // 设置准备状态请求
 message C2S_SetReady {
-    bool is_ready = 1; // 是否准备
+  bool is_ready = 1; // 是否准备
 }
 
 // 开始游戏请求（房主)
@@ -141,38 +151,49 @@ message C2S_StartGame {
 
 // 创建房间反馈
 message S2C_CreateRoomResult {
-    bool success = 1; // 是否创建成功
-    uint32 room_id = 2; // 房间id
-    string message_create = 3; // 信息
+  bool success = 1; // 是否创建成功
+  uint32 room_id = 2; // 房间id
+  string message_create = 3; // 信息
 }
 
 // 房间列表反馈
 message S2C_RoomList {
-    repeated RoomInfo rooms = 1; // 所有房间信息
+  repeated RoomInfo rooms = 1; // 所有房间信息, 房间容器
 }
 
 // 加入房间反馈
 message S2C_JoinRoomResult {
-    bool success = 1; // 是否加入成功
-    string message_join = 2; // 信息
+  bool success = 1; // 是否加入成功
+  string message_join = 2; // 信息
 }
 
 // 离开房间反馈
 message S2C_LeaveRoomResult {
-    bool success = 1; // 是否离开成功
-    string message_leave = 2; // 信息
+  bool success = 1; // 是否离开成功
+  string message_leave = 2; // 信息
+}
+
+// 设置准备状态反馈
+message S2C_SetReadyResult {
+  bool success = 1; // 是否设置成功
+  uint32 room_id = 2; // 房间id
+  bool is_ready = 3; // 当前准备状态
+  string message_ready = 4; // 信息
 }
 
 // 房间信息更新(广播)
 message S2C_RoomUpdate {
-    uint32 room_id = 1; // 房间id
-    repeated PlayerInfo players = 2; // 当前房间内所有玩家
+  uint32 room_id = 1; // 房间id
+  repeated PlayerInfo players = 2; // 当前房间内所有玩家, 玩家容器
 }
 
 // 游戏开始反馈(广播)
 message S2C_GameStart {
-    uint32 room_id = 1; // 房间id
-    uint64 start_time = 2; // 游戏开始时间戳
+  uint32 room_id = 1; // 房间id
+  uint64 start_time = 2; // 游戏开始时间戳
+  bool success = 3; // 是否开始成功（失败则仅回给发起者）
+  string message_start = 4; // 开始结果说明
+  SceneInfo scene = 5; // 场景信息（开始成功时有效）
 }
 
 // =============================
@@ -199,6 +220,7 @@ message PlayerState {
     bool has_buff = 14;            // 是否有灌注/增益效果
     uint32 buff_id = 15;           // Buff ID（0 表示无）
     uint32 attack_speed = 16;       // 攻击速度（数值越大越快，或表示攻击间隔 ms）
+    float move_speed = 17;          // 移动速度（像素/秒）
 }
 
 // 射弹信息（如豌豆、子弹）
@@ -239,62 +261,65 @@ message C2S_PlayerInput {
     Vector2 move_direction = 2;    // 移动方向（归一化向量）
     bool is_attacking = 3;         // 是否正在攻击
     Timestamp input_time = 4;      // 输入时间戳（用于延迟补偿）
+    uint32 input_seq = 5;          // 输入序号（客户端递增，用于去重/乱序处理）
+    uint32 delta_ms = 6;           // 距上一次输入的时间间隔（ms，客户端估算，0 表示未知）
 }
 
 // --------------服务器->客户端--------------
 
 // 游戏状态同步（定期发送，如每秒20次）
 message S2C_GameStateSync {
-    Timestamp sync_time = 1;
-    repeated PlayerState players = 2;            // 变化的玩家状态
-    repeated EnemyState enemies = 3;             // 变化的敌人状态
-    repeated ItemState items = 4;                // 道具状态（如新掉落或被拾取）
+  Timestamp sync_time = 1;
+  repeated PlayerState players = 2;            // 变化的玩家状态,容器
+  repeated EnemyState enemies = 3;             // 变化的敌人状态,容器
+  repeated ItemState items = 4;                // 道具状态（如新掉落或被拾取）,容器
+  uint32 room_id = 5;                          // 所属房间ID（便于客户端路由/校验）
 }
 
 // 玩家受伤广播
 message S2C_PlayerHurt {
-    uint32 player_id = 1;        // 受伤玩家ID
-    uint32 damage = 2;           // 扣除的伤害值
-    int32 remaining_health = 3;  // 受伤后的血量
-    uint32 source_id = 4;        // 伤害来源ID（玩家或敌人）
+  uint32 player_id = 1;        // 受伤玩家ID
+  uint32 damage = 2;           // 扣除的伤害值
+  int32 remaining_health = 3;  // 受伤后的血量
+  uint32 source_id = 4;        // 伤害来源ID（玩家或敌人）
 }
 
 // 敌人死亡广播
 message S2C_EnemyDied {
-    uint32 enemy_id = 1;          // 死亡的敌人实例ID
-    uint32 killer_player_id = 2;  // 造成击杀的玩家ID
-    uint32 wave_id = 3;           // 敌人所属波次
-    Vector2 position = 4;         // 死亡位置，用于播放特效
+  uint32 enemy_id = 1;          // 死亡的敌人实例ID
+  uint32 killer_player_id = 2;  // 造成击杀的玩家ID
+  uint32 wave_id = 3;           // 敌人所属波次
+  Vector2 position = 4;         // 死亡位置，用于播放特效
 }
 
 // 玩家升级广播
 message S2C_PlayerLevelUp {
-    uint32 player_id = 1;      // 升级玩家ID
-    uint32 new_level = 2;      // 新等级
-    uint32 exp_to_next = 3;    // 升级后到下一级所需经验
+  uint32 player_id = 1;      // 升级玩家ID
+  uint32 new_level = 2;      // 新等级
+  uint32 exp_to_next = 3;    // 升级后到下一级所需经验
 }
 
 // 道具掉落广播
 message S2C_DroppedItem {
-    repeated ItemState items = 1;   // 新掉落的道具列表
-    uint32 source_enemy_id = 2;     // 触发掉落的敌人实例ID（无则为0）
-    uint32 wave_id = 3;             // 掉落所属波次（无则为0）
+  repeated ItemState items = 1;   // 新掉落的道具列表,容器
+  uint32 source_enemy_id = 2;     // 触发掉落的敌人实例ID（无则为0）
+  uint32 wave_id = 3;             // 掉落所属波次（无则为0）
 }
 
 // 玩家得分反馈
 message PlayerScore {
-    uint32 player_id = 1; // 玩家id
-    string player_name = 2; // 玩家名称
-    int32 final_level = 3; // 最终等级
-    int32 kill_count = 4; // 击杀数量
-    int32 damage_dealt = 5; // 总伤害
+  uint32 player_id = 1; // 玩家id
+  string player_name = 2; // 玩家名称
+  int32 final_level = 3; // 最终等级
+  int32 kill_count = 4; // 击杀数量
+  int32 damage_dealt = 5; // 总伤害
 }
 
 // 游戏结束反馈
 message S2C_GameOver {
-    bool victory = 1; // 是否胜利
-    uint32 survive_time = 2; // 存活时间
-    repeated PlayerScore scores = 3; // 所有玩家得分
+  bool victory = 1; // 是否胜利
+  uint32 survive_time = 2; // 存活时间
+  repeated PlayerScore scores = 3; // 所有玩家得分,容器
 }
 
 // —————— 以下为配置类（仅客户端/服务端本地加载，不通过网络传输）——————
@@ -327,6 +352,6 @@ message ItemConfig {
 
 // 网络消息封装（通用包格式）
 message Packet {
-    MessageType msg_type = 1;      // 消息类型（使用 MessageType 枚举值）
+    MessageType msg_type = 1;           // 消息类型（使用 MessageType 枚举值）
     bytes payload = 2;             // 序列化后的具体消息内容
 }

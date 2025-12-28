@@ -1,0 +1,54 @@
+
+def_in.png
+size: 1024, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+in_0
+  rotate: false
+  xy: 2, 2
+  size: 309, 519
+  orig: 309, 519
+  offset: 0, 0
+  index: 0
+in_1
+  rotate: false
+  xy: 313, 2
+  size: 309, 519
+  orig: 309, 519
+  offset: 0, 0
+  index: 1
+in_2
+  rotate: false
+  xy: 624, 2
+  size: 309, 519
+  orig: 309, 519
+  offset: 0, 0
+  index: 2
+
+def_in2.png
+size: 1024, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+in_3
+  rotate: false
+  xy: 2, 2
+  size: 309, 519
+  orig: 309, 519
+  offset: 0, 0
+  index: 3
+in_4
+  rotate: false
+  xy: 313, 2
+  size: 309, 519
+  orig: 309, 519
+  offset: 0, 0
+  index: 4
+in_5
+  rotate: false
+  xy: 624, 2
+  size: 309, 519
+  orig: 309, 519
+  offset: 0, 0
+  index: 5

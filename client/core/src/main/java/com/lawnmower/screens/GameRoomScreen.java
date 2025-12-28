@@ -10,8 +10,10 @@ import com.badlogic.gdx.scenes.scene2d.ui.*;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.utils.Scaling;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
+
 import com.lawnmower.Main;
 import lawnmower.Message;
+
 
 import java.util.List;
 import java.util.Objects;

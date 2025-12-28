@@ -1,23 +1,86 @@
+allprojects {
+    version = '1.0'
+    ext {
+        appName = "LawnMowerGame"
+        gdxVersion = '1.11.0'
+        nettyVersion = '4.1.100.Final'
+        protobufVersion = '3.20.1'
+        slf4jVersion = '2.0.9'
+        logbackVersion = '1.4.11'
+        jvmVersion = '17'
+    }
+
+    buildscript {
+        repositories {
+            mavenCentral()
+            maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+            google()
+            gradlePluginPortal()
+        }
+        dependencies {
+            classpath 'com.android.tools.build:gradle:7.0.4'
+            classpath "com.google.protobuf:protobuf-gradle-plugin:0.9.4"
+            classpath "com.badlogicgames.gdx:gdx-tools:${gdxVersion}"
+        }
+    }
+
+    repositories {
+        mavenCentral()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+        maven { url "https://maven.aliyun.com/repository/public/" }
+    }
+
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+        options.compilerArgs << '-Xlint:none'
+    }
+}
+
+// ==================== core 模块 ====================
+project(":core") {
+    apply plugin: "java-library"
+
+    sourceSets.main {
+        java.srcDirs = ["src/main/java"]
+        resources.srcDirs = ["assets"]   // ← assets 是核心资源
+    }
+
+    dependencies {
+        api "com.badlogicgames.gdx:gdx:$gdxVersion"
+        implementation "io.netty:netty-all:$nettyVersion"
+        api "com.google.protobuf:protobuf-java:$protobufVersion"
+        api "org.slf4j:slf4j-api:$slf4jVersion"
+        api "com.badlogicgames.gdx:gdx-freetype:$gdxVersion"
+    }
+
+    java {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+// ==================== desktop 模块 ====================
 project(":desktop") {
     apply plugin: "java-library"
     apply plugin: "application"
 
-    // 新增：配置资源目录（关键！）
-    sourceSets.main {
-        java.srcDirs = ["src"]
-        resources.srcDirs = ["../assets"]  // ← 指向项目根目录下的 assets/
+    configurations {
+        texturePacker
     }
+
+    sourceSets.main {
+        java.srcDirs = ["src/main/java"]   // ← 使用 Maven 标准路径
+        resources.srcDirs = ["../assets"]
+    }
+
     dependencies {
         implementation project(":core")
         api "com.badlogicgames.gdx:gdx-backend-lwjgl3:$gdxVersion"
         api "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop"
         implementation "com.google.protobuf:protobuf-java:$protobufVersion"
-
-        // FreeType 桌面 native 依赖
         api "com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-desktop"
-
-        // Logback 实现（仅 desktop）
         runtimeOnly "ch.qos.logback:logback-classic:$logbackVersion"
+        texturePacker "com.badlogicgames.gdx:gdx-tools:$gdxVersion"
     }
 
     application {
@@ -30,26 +93,29 @@ project(":desktop") {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // ============ 新增：TexturePacker 自动打包任务 ============
-    task runTexturePacker(type: JavaExec) {
-        dependsOn classes
+    // 打包 def_in
+    task packDefIn(type: JavaExec) {
         mainClass = 'com.badlogic.gdx.tools.texturepacker.TexturePacker'
-        classpath = sourceSets.main.runtimeClasspath
-
-        // 示例：打包 enemy 目录（你可以按需添加更多）
-        args = [
-                "../assets-raw/def",      // 输入目录（GIF 已拆成 PNG）
-                "../core/assets/def",     // 输出目录（所有平台共享）
-                "def.atlas",
-                "--max-width", "2048",
-                "--max-height", "2048",
-                "--padding", "2",
-                "--duplicate-padding"
-        ]
+        classpath = configurations.texturePacker
+        args = ['../assets-raw/def_in', '../core/assets/def_in', 'def_in']
     }
 
-    // 可选：让运行前自动打包
-    tasks.named("run") {
-        dependsOn runTexturePacker
+    // 打包 def
+    task packDef(type: JavaExec) {
+        mainClass = 'com.badlogic.gdx.tools.texturepacker.TexturePacker'
+        classpath = configurations.texturePacker
+        args = ['../assets-raw/def', '../core/assets/def', 'def']
+    }
+
+    // 打包 def_out
+    task packDefOut(type: JavaExec) {
+        mainClass = 'com.badlogic.gdx.tools.texturepacker.TexturePacker'
+        classpath = configurations.texturePacker
+        args = ['../assets-raw/def_out', '../core/assets/def_out', 'def_out']
+    }
+
+    // 一键打包所有
+    task runTexturePacker {
+        dependsOn packDefIn
     }
 }

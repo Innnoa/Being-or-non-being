@@ -1,0 +1,121 @@
+
+def.png
+size: 1024, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+frame_00_delay-0.13s
+  rotate: false
+  xy: 2, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_01_delay-0.13s
+  rotate: false
+  xy: 320, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_02_delay-0.13s
+  rotate: false
+  xy: 638, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+
+def2.png
+size: 1024, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+frame_03_delay-0.13s
+  rotate: false
+  xy: 2, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_04_delay-0.13s
+  rotate: false
+  xy: 320, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_05_delay-0.13s
+  rotate: false
+  xy: 638, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+
+def3.png
+size: 1024, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+frame_06_delay-0.13s
+  rotate: false
+  xy: 2, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_07_delay-0.13s
+  rotate: false
+  xy: 320, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_08_delay-0.13s
+  rotate: false
+  xy: 638, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+
+def4.png
+size: 1024, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+frame_09_delay-0.13s
+  rotate: false
+  xy: 2, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_10_delay-0.13s
+  rotate: false
+  xy: 320, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+frame_11_delay-0.13s
+  rotate: false
+  xy: 638, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1
+
+def5.png
+size: 512, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+frame_12_delay-0.13s
+  rotate: false
+  xy: 2, 2
+  size: 316, 519
+  orig: 316, 519
+  offset: 0, 0
+  index: -1

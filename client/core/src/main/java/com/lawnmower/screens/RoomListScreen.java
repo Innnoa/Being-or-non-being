@@ -3,23 +3,26 @@ package com.lawnmower.screens;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.graphics.g2d.Animation;
+import com.badlogic.gdx.graphics.g2d.TextureAtlas;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
-import com.badlogic.gdx.scenes.scene2d.Actor;
-import com.badlogic.gdx.scenes.scene2d.Group;
-import com.badlogic.gdx.scenes.scene2d.InputEvent;
+import com.badlogic.gdx.scenes.scene2d.*;
 import com.badlogic.gdx.Screen;
-import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.actions.Actions;
 import com.badlogic.gdx.scenes.scene2d.ui.*;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.Align;
+import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Scaling;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
+
 import com.lawnmower.Main;
 import com.lawnmower.ui.Drop.DropPopup;
 import com.lawnmower.ui.slider.StepSlider;
 import lawnmower.Message;
+
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -33,6 +36,22 @@ public class RoomListScreen implements Screen {
     private Texture backgroundTexture;
     private Image backgroundImage;
     private Label titleLabel;
+    private float animStateTime = 0f;
+    private Image animImage; // 用于显示动画的 Actor
+
+    private TextureAtlas defInAtlas;
+    private TextureAtlas defStayAtlas;
+    private TextureAtlas defOutAtlas;
+
+    private Animation<TextureRegion> animIn;
+    private Animation<TextureRegion> animStay;    // def ~ def4 (12 frames)
+    private Animation<TextureRegion> animOut;     // def_out
+
+    private Label errorLabel;                     // 错误提示文本
+    private int currentAnimPhase = -1;            // -1=空闲, 0=in, 1=stay, 2=out
+
+    private String lastErrorMsg = "";
+
 
     // 虚拟设计分辨率（与 MainMenuScreen 一致）
     private static final float DESIGN_WIDTH = 2560f;
@@ -45,6 +64,9 @@ public class RoomListScreen implements Screen {
     private TextButton prevPageBtn; // 上一页按钮
     private TextButton nextPageBtn; // 下一页按钮
     private Label pageInfoLabel; // 页码信息标签（如“第1页/共3页”）
+    private boolean justClicked = false;
+    private Window errorWindow = null; // 新增字段：用于管理弹窗
+    private EventListener globalClickListener = null;
 
     public RoomListScreen(Main game, Skin skin) {
         this.game = game;
@@ -56,6 +78,11 @@ public class RoomListScreen implements Screen {
     public void show() {
         stage = new Stage(new StretchViewport(DESIGN_WIDTH, DESIGN_HEIGHT));
         Gdx.input.setInputProcessor(stage);
+
+        loadAnimations();
+
+        animImage = new Image();
+        animImage.setSize(256, 256); // 初始大小（可被 showError 覆盖）
 
         // 加载背景
         backgroundTexture = new Texture(Gdx.files.internal("background/roomListBackground.png"));
@@ -104,7 +131,6 @@ public class RoomListScreen implements Screen {
         scrollPane.setPosition(470, 150);
         stage.addActor(scrollPane);
 
-        // ===== 分页控件初始化 =====
         // 上一页按钮
         prevPageBtn = new TextButton("<<", defaultButtonStyle);
         prevPageBtn.setSize(150, 70);
@@ -177,12 +203,39 @@ public class RoomListScreen implements Screen {
         stage.addActor(pageInfoLabel);
         stage.addActor(nextPageBtn);
 
-//         //请求房间列表（取消注释启用）
-//         try {
-//             game.getTcpClient().sendGetRoomList();
-//         } catch (IOException e) {
-//             Gdx.app.error("NET", "请求房间列表失败", e);
-//         }
+//TODO
+         //请求房间列表（取消注释启用）
+         try {
+             game.getTcpClient().sendGetRoomList();
+         } catch (IOException e) {
+             Gdx.app.error("NET", "请求房间列表失败", e);
+         }
+    }
+
+    private void loadAnimations() {
+        defInAtlas = new TextureAtlas("def_in/def_in.atlas");
+        Array<TextureRegion> inFrames = new Array<>();
+        for (int i = 0; i < 6; i++) {
+            inFrames.add(defInAtlas.findRegion("in_" + i));
+        }
+        animIn = new Animation<>(0.1f, inFrames);
+
+        // 加载停留动画
+        defStayAtlas = new TextureAtlas("def/def.atlas");
+        Array<TextureRegion> stayFrames = new Array<>();
+        for (int i = 0; i < 12; i++) {
+            String name = String.format("frame_%02d_delay-0.13s", i);
+            stayFrames.add(defStayAtlas.findRegion(name));
+        }
+        animStay = new Animation<>(0.13f, stayFrames,Animation.PlayMode.LOOP);
+
+        // 加载退出动画
+        defOutAtlas = new TextureAtlas("def_out/def_out.atlas");
+        Array<TextureRegion> outFrames = new Array<>();
+        for (int i = 0; i < 6; i++) {
+            outFrames.add(defOutAtlas.findRegion("out_" + i));
+        }
+        animOut = new Animation<>(0.1f, outFrames);
     }
 
     // ===== 分页核心方法 =====
@@ -365,12 +418,12 @@ public class RoomListScreen implements Screen {
                     return;
                 }
                 Gdx.app.log("CreateRoom", "名称: " + roomName + ", 人数: " + maxPlayers + ", 难度: " + stepSlider.getCurrentLabel());
-
+//TODO
                 try {
-                            game.getTcpClient().sendCreateRoom(roomName, maxPlayers);
-                        } catch (IOException e) {
-                            showError("网络错误");
-                        }
+                    game.getTcpClient().sendCreateRoom(roomName, maxPlayers);
+                } catch (IOException e) {
+                    showError("网络错误");
+                }
                 dropPopup.hide();
             }
         });
@@ -403,18 +456,179 @@ public class RoomListScreen implements Screen {
     }
 
     public void showError(String msg) {
-        Gdx.app.postRunnable(() -> {
-            new Dialog("错误", skin)
-                    .text(msg)
-                    .button("确定")
-                    .show(stage);
-        });
+        if (currentAnimPhase != -1) return; // 防重复
+
+        lastErrorMsg = msg;
+        currentAnimPhase = 0; // 👈 改为 0：先播放 in 动画
+        animStateTime = 0f;
+
+        // 显示图像
+        animImage.setSize(400, 800);
+        animImage.setPosition(0, 0);
+        animImage.setVisible(true);
+        if (animImage.getParent() == null) {
+            stage.addActor(animImage);
+        }
+
+        // 显示错误文本
+        if (errorWindow == null) {
+            errorWindow = new Window("", skin);
+
+            // 设置背景
+            try {
+                Texture bgTexture = new Texture(Gdx.files.internal("background/speakBackground2.png"));
+                errorWindow.setBackground(new TextureRegionDrawable(new TextureRegion(bgTexture)));
+            } catch (Exception e) {
+                Gdx.app.error("UI", "Failed to load dialog background", e);
+                // 可选：设置默认背景色
+                errorWindow.setBackground(skin.newDrawable("default-select", 0.1f, 0.1f, 0.1f, 0.8f));
+            }
+
+            errorWindow.setModal(true);
+            errorWindow.setMovable(false);
+            errorWindow.setResizable(false);
+            errorWindow.pad(30);
+
+            // 点击任意空白处关闭（包括背景）
+            errorWindow.addListener(new ClickListener() {
+                @Override
+                public void clicked(InputEvent event, float x, float y) {
+                    // 如果还在 stay 或 in 阶段，触发 out 动画
+                    if (currentAnimPhase == 0 || currentAnimPhase == 1) {
+                        playOutAnimation();
+                    }
+                    // 注意：不立即 remove，等 out 动画结束统一 cleanup
+                }
+
+                // 关键：允许点击穿透到背景（但子控件如按钮会拦截）
+                @Override
+                public boolean touchDown(InputEvent event, float x, float y, int pointer, int button) {
+                    return true; // 消费事件，防止传递给 stage 下层
+                }
+            });
+
+            // 内容布局
+            Table contentTable = new Table();
+            contentTable.pad(40);
+
+            Label messageLabel = new Label(msg, skin, "default_32");
+            messageLabel.setWrap(true);
+            messageLabel.setAlignment(Align.center);
+            messageLabel.setWidth(500);
+
+            Label hintLabel = new Label("      点击任意位置关闭...", skin, "default_32");
+            hintLabel.setWrap(true);
+            hintLabel.setAlignment(Align.center);
+            hintLabel.setWidth(500);
+
+            contentTable.add(messageLabel).width(500).padBottom(20).row();
+            contentTable.add(hintLabel).width(500);
+
+            errorWindow.add(contentTable).expand().fill();
+
+            // 居中显示
+            errorWindow.pack();
+            errorWindow.setPosition(
+                    150,750
+            );
+
+            stage.addActor(errorWindow);
+        }
+        globalClickListener = new InputListener() {
+            @Override
+            public boolean touchDown(InputEvent event, float x, float y, int pointer, int button) {
+                // 只要弹窗存在，任意点击都触发退出
+                if (currentAnimPhase == 0 || currentAnimPhase == 1) {
+                    playOutAnimation();
+                }
+                return true; // 消费事件，防止穿透（可选）
+            }
+        };
+        stage.addListener(globalClickListener);
+    }
+
+    private void playStayAssistant() {
+        if (currentAnimPhase != 0) return;
+        currentAnimPhase = 1; // 切换到 stay
+        animStateTime = 0f;
+    }
+
+    private void playOutAnimation() {
+        if (currentAnimPhase == 0 || currentAnimPhase == 1) {
+            currentAnimPhase = 2;
+            animStateTime = 0f;
+        }
+    }
+
+    private void cleanupAnimation() {
+        if (animImage.getParent() != null) animImage.remove();
+
+        if (errorWindow != null && errorWindow.getStage() != null) {
+            errorWindow.remove();
+            errorWindow = null;
+        }
+
+        // === 移除全局点击监听器 ===
+        if (globalClickListener != null) {
+            stage.removeListener(globalClickListener);
+            globalClickListener = null;
+        }
+
+        currentAnimPhase = -1;
+        animStateTime = 0f;
+        justClicked = false;
     }
 
     @Override
     public void render(float delta) {
-        Gdx.gl.glClearColor(0.1f, 0.15f, 0.1f, 1);
+        Gdx.gl.glClearColor(0, 0, 0, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+
+        // 处理动画逻辑
+        if (currentAnimPhase != -1 && animImage.getParent() != null) {
+            animStateTime += delta;
+            TextureRegion currentFrame = null;
+            Gdx.app.log("DEBUG", "currentAnimPhase = " + currentAnimPhase);
+
+            switch (currentAnimPhase) {
+                case 0: // in 动画（一次性）
+                    currentFrame = animIn.getKeyFrame(animStateTime, false);
+                    if (animIn.isAnimationFinished(animStateTime)) {
+                        playStayAssistant(); // 自动切换到 stay
+                    }
+                    break;
+
+                case 1: // stay 阶段（循环）
+                    currentFrame = animStay.getKeyFrame(animStateTime, true);
+                    Gdx.app.log("Anim", "Stay phase, time=" + animStateTime);
+                    break;
+
+                case 2: // out 阶段
+                    currentFrame = animOut.getKeyFrame(animStateTime, false);
+                    Gdx.app.log("Anim", "Out phase, time=" + animStateTime + ", finished=" + animOut.isAnimationFinished(animStateTime));
+                    if (animOut.isAnimationFinished(animStateTime)) {
+                        cleanupAnimation();
+                    }
+                    break;
+            }
+
+            if (currentFrame != null) {
+                animImage.setDrawable(new TextureRegionDrawable(currentFrame));
+            }
+        }
+
+        if (currentAnimPhase == 1 && (Gdx.input.isTouched() || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE))) {
+            // 防止连续触发：只在“刚按下”时响应
+            // 使用一个简单的标志避免一帧内多次触发
+            if (!justClicked) {
+                justClicked = true;
+                playOutAnimation();
+                currentAnimPhase = 2;
+            }
+        } else {
+            justClicked = false; // 松开后重置
+        }
+        // 舞台渲染
         stage.act(delta);
         stage.draw();
     }
@@ -431,11 +645,20 @@ public class RoomListScreen implements Screen {
     public void resume() {}
 
     @Override
-    public void hide() {}
+    public void hide() {
+        // 强制清理，防止状态残留
+        if (currentAnimPhase != -1) {
+            cleanupAnimation();
+        }
+    }
 
     @Override
     public void dispose() {
-        if (backgroundTexture != null) backgroundTexture.dispose();
+        hide();
         stage.dispose();
+        backgroundTexture.dispose();
+        defInAtlas.dispose();
+        defStayAtlas.dispose();
+        defOutAtlas.dispose();
     }
 }

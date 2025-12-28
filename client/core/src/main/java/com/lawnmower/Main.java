@@ -2,15 +2,16 @@ package com.lawnmower;
 
 import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.scenes.scene2d.ui.Skin;
+
+import com.lawnmower.network.TcpClient;
 import com.lawnmower.screens.GameRoomScreen;
 import com.lawnmower.screens.GameScreen;
 import com.lawnmower.screens.MainMenuScreen;
 import com.lawnmower.screens.RoomListScreen;
 import com.lawnmower.ui.PvzSkin;
-import com.lawnmower.network.TcpClient;
 import lawnmower.Message;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,21 +33,21 @@ public class Main extends Game {
         //使用自定义 PVZ 风格皮肤
         skin = PvzSkin.create();
 
-//        // 初始化 TCP 客户端（连接本地服务器）
-//        try {
-//            tcpClient = new TcpClient();
-//            tcpClient.connect(Config.SERVER_HOST, Config.SERVER_PORT);
-//            log.info("Connected to server {}:{}", Config.SERVER_HOST, Config.SERVER_PORT);
-//            setScreen(new RoomListScreen(Main.this, skin));
-//            // 启动网络监听线程
-//            startNetworkThread();
-//        } catch (IOException e) {
-//            log.error("Failed to connect to server", e);
-//            // 可选：弹出错误对话框或进入离线模式
-//        }
+        // 初始化 TCP 客户端（连接本地服务器）
+        try {
+            tcpClient = new TcpClient();
+            tcpClient.connect(Config.SERVER_HOST, Config.SERVER_PORT);
+            log.info("Connected to server {}:{}", Config.SERVER_HOST, Config.SERVER_PORT);
+            setScreen(new RoomListScreen(Main.this, skin));
+            // 启动网络监听线程
+            startNetworkThread();
+        } catch (IOException e) {
+            log.error("Failed to connect to server", e);
+            // 可选：弹出错误对话框或进入离线模式
+        }
 
         // 设置初始屏幕为主菜单
-        setScreen(new RoomListScreen(this,skin));
+        setScreen(new MainMenuScreen(this,skin));
     }
 
     private void startNetworkThread() {
@@ -166,10 +167,10 @@ public class Main extends Game {
                         setPlayerId(result.getPlayerId());
                         setPlayerName(result.getMessageLogin());
                         // 登录成功，跳转到房间列表
-                        setScreen(new com.lawnmower.screens.RoomListScreen(Main.this, skin));
+                        setScreen(new RoomListScreen(Main.this, skin));
                     } else {
                         // 登录失败：返回主菜单并提示
-                        if (getScreen() instanceof com.lawnmower.screens.MainMenuScreen mainMenu) {
+                        if (getScreen() instanceof MainMenuScreen mainMenu) {
                             mainMenu.showError("登录失败: " + result.getMessageLogin());
                         } else {
                             setScreen(new MainMenuScreen(Main.this, skin));
@@ -179,7 +180,7 @@ public class Main extends Game {
                     break;
 
                 case MSG_S2C_ROOM_LIST:
-                    if (getScreen() instanceof com.lawnmower.screens.RoomListScreen roomList) {
+                    if (getScreen() instanceof RoomListScreen roomList) {
                         Message.S2C_RoomList list = (Message.S2C_RoomList) message;
                         roomList.onRoomListReceived(list.getRoomsList());
                     }
@@ -187,24 +188,24 @@ public class Main extends Game {
 
                 case MSG_S2C_ROOM_UPDATE:
                     Message.S2C_RoomUpdate update = (Message.S2C_RoomUpdate) message;
-                    if (!(getScreen() instanceof com.lawnmower.screens.GameRoomScreen)) {
+                    if (!(getScreen() instanceof GameRoomScreen)) {
                         // 自动进入游戏房间界面
-                        setScreen(new com.lawnmower.screens.GameRoomScreen(Main.this, skin));
+                        setScreen(new GameRoomScreen(Main.this, skin));
                     }
-                    if (getScreen() instanceof com.lawnmower.screens.GameRoomScreen gameRoom) {
+                    if (getScreen() instanceof GameRoomScreen gameRoom) {
                         gameRoom.onRoomUpdate(update.getRoomId(), update.getPlayersList());
                     }
                     break;
                 case MSG_S2C_GAME_START:
-                    if (getScreen() instanceof com.lawnmower.screens.GameRoomScreen) {
+                    if (getScreen() instanceof GameRoomScreen) {
                         // 切换到游戏场景
-                        setScreen(new com.lawnmower.screens.GameScreen(Main.this));
+                        setScreen(new GameScreen(Main.this));
                     }
                     break;
 
                 case MSG_S2C_GAME_STATE_SYNC:
                     // 将同步数据转发给 GameScreen（如果当前是游戏界面）
-                    if (getScreen() instanceof com.lawnmower.screens.GameScreen gameScreen) {
+                    if (getScreen() instanceof GameScreen gameScreen) {
                         Message.S2C_GameStateSync sync = (Message.S2C_GameStateSync) message;
                         gameScreen.onGameStateReceived(sync);
                     }
@@ -217,7 +218,7 @@ public class Main extends Game {
                 case MSG_S2C_GAME_OVER:
                     // 暂时只打日志，后续由 GameScreen 处理
                     Gdx.app.log("GAME_EVENT", "Received game event: " + type);
-                    if (getScreen() instanceof com.lawnmower.screens.GameScreen gameScreen) {
+                    if (getScreen() instanceof GameScreen gameScreen) {
                         gameScreen.onGameEvent(type, message);
                     }
                     break;
