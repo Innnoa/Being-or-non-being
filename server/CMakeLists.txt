@@ -7,11 +7,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # 查找依赖
 find_package(Protobuf REQUIRED)
 find_package(spdlog REQUIRED)
-find_package(PkgConfig REQUIRED)
 
 # Protobuf 代码生成
 set(PROTO_DIR ${CMAKE_SOURCE_DIR}/proto)
-set(GEN_DIR ${CMAKE_SOURCE_DIR}/generated)
+set(GEN_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GEN_DIR})
 
 file(GLOB PROTO_FILES "${PROTO_DIR}/*.proto")
@@ -50,16 +49,37 @@ target_link_libraries(server
       spdlog::spdlog
 )
 
-# absl全家桶
-pkg_check_modules(ABSEIL REQUIRED IMPORTED_TARGET
-    absl_log
-    absl_flags
-    absl_flags_parse
-)
-target_link_libraries(server 
-  PRIVATE 
-  PkgConfig::ABSEIL
-  absl_log_internal_check_op
-  absl_die_if_null
-  absl_log_internal_message
+# Abseil（可选）：如果找不到日志目标则跳过，不阻塞构建
+set(ABSL_LOG_TARGETS)
+find_package(absl CONFIG QUIET)
+if(absl_FOUND AND TARGET absl::log)
+  list(APPEND ABSL_LOG_TARGETS
+    absl::log
+    absl::log_internal_check_op
+    absl::log_internal_message
+    absl::log_internal_nullguard
+    absl::check
+  )
+else()
+  find_library(ABSL_LOG absl_log)
+  find_library(ABSL_LOG_INTERNAL_CHECK_OP absl_log_internal_check_op)
+  find_library(ABSL_LOG_INTERNAL_MESSAGE absl_log_internal_message)
+  find_library(ABSL_LOG_INTERNAL_NULLGUARD absl_log_internal_nullguard)
+  find_library(ABSL_CHECK NAMES absl_check absl_die_if_null)
+  if(ABSL_LOG AND ABSL_LOG_INTERNAL_CHECK_OP AND ABSL_LOG_INTERNAL_MESSAGE AND ABSL_LOG_INTERNAL_NULLGUARD AND ABSL_CHECK)
+    list(APPEND ABSL_LOG_TARGETS
+      ${ABSL_LOG}
+      ${ABSL_LOG_INTERNAL_CHECK_OP}
+      ${ABSL_LOG_INTERNAL_MESSAGE}
+      ${ABSL_LOG_INTERNAL_NULLGUARD}
+      ${ABSL_CHECK}
+    )
+  else()
+    message(STATUS "Abseil log libs not found; skipping absl logging")
+  endif()
+endif()
+
+target_link_libraries(server
+  PRIVATE
+      ${ABSL_LOG_TARGETS}
 )
