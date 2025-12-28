@@ -33,7 +33,7 @@ class GameManager {
  private:
   GameManager() = default;
 
-  struct SceneConfig {
+  struct SceneConfig { // 默认场景配置
     uint32_t width = 2000;
     uint32_t height = 2000;
     uint32_t tick_rate = 60;
@@ -48,7 +48,7 @@ class GameManager {
 
   struct Scene {
     SceneConfig config;
-    std::unordered_map<uint32_t, PlayerRuntime> players;
+    std::unordered_map<uint32_t, PlayerRuntime> players; // 玩家对应玩家运行状态
   };
 
   SceneConfig BuildDefaultConfig() const;
