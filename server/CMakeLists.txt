@@ -43,6 +43,7 @@ add_executable(server
   src/game/managers/game_manager.cpp
 )
 target_include_directories(server PRIVATE include)
+target_compile_definitions(server PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG)
 target_link_libraries(server 
   PRIVATE 
       proto_lib 

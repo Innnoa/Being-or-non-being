@@ -6,6 +6,8 @@
 #include <numbers>
 #include <spdlog/spdlog.h>
 
+#include "network/tcp/tcp_server.hpp"
+
 namespace {
 constexpr float kSpawnRadius = 120.0f;
 constexpr int32_t kDefaultMaxHealth = 100;
@@ -47,6 +49,92 @@ lawnmower::Timestamp GameManager::BuildTimestamp() {
   ts.set_server_time(NowMs());
   ts.set_tick(++tick_counter_);
   return ts;
+}
+
+void GameManager::SetIoContext(asio::io_context* io) {
+  io_context_ = io;
+}
+
+void GameManager::ScheduleStateSync(
+    uint32_t room_id, std::chrono::milliseconds interval,
+    const std::shared_ptr<asio::steady_timer>& timer) {
+  if (!timer) {
+    return;
+  }
+
+  timer->expires_after(interval);
+  timer->async_wait(
+      [this, room_id, interval, timer](const asio::error_code& ec) {
+        if (ec == asio::error::operation_aborted) {
+          return;
+        }
+
+        lawnmower::S2C_GameStateSync sync;
+        if (!BuildFullState(room_id, &sync)) {
+          StopStateSyncLoop(room_id);
+          return;
+        }
+
+        const auto sessions = RoomManager::Instance().GetRoomSessions(room_id);
+        for (const auto& weak_session : sessions) {
+          if (auto session = weak_session.lock()) {
+            session->SendProto(lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC,
+                               sync);
+          }
+        }
+
+        ScheduleStateSync(room_id, interval, timer);
+      });
+}
+
+void GameManager::StartStateSyncLoop(uint32_t room_id) {
+  if (io_context_ == nullptr) {
+    spdlog::warn("未设置 io_context，无法启动状态同步定时器");
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto scene_it = scenes_.find(room_id);
+    if (scene_it == scenes_.end()) {
+      spdlog::warn("房间 {} 未找到场景，跳过状态同步定时器", room_id);
+      return;
+    }
+  }
+
+  auto timer = std::make_shared<asio::steady_timer>(*io_context_);
+  {
+    std::lock_guard<std::mutex> lock(timer_mutex_);
+    auto it = sync_timers_.find(room_id);
+    if (it != sync_timers_.end()) {
+      it->second->cancel();
+    }
+    sync_timers_[room_id] = timer;
+  }
+
+  // 测试期：固定 5 秒一次全量同步
+  const auto interval = std::chrono::seconds(5);
+  ScheduleStateSync(room_id, interval, timer);
+  spdlog::debug("房间 {} 启动状态同步定时器，间隔 {} ms", room_id,
+                std::chrono::duration_cast<std::chrono::milliseconds>(interval)
+                    .count());
+}
+
+void GameManager::StopStateSyncLoop(uint32_t room_id) {
+  std::shared_ptr<asio::steady_timer> timer;
+  {
+    std::lock_guard<std::mutex> lock(timer_mutex_);
+    auto it = sync_timers_.find(room_id);
+    if (it == sync_timers_.end()) {
+      return;
+    }
+    timer = it->second;
+    sync_timers_.erase(it);
+  }
+
+  if (timer) {
+    timer->cancel();
+  }
 }
 
 // 放置玩家？
@@ -107,6 +195,7 @@ void GameManager::PlacePlayers(const RoomManager::RoomSnapshot& snapshot,
 // 创建场景
 lawnmower::SceneInfo GameManager::CreateScene(
     const RoomManager::RoomSnapshot& snapshot) {
+  StopStateSyncLoop(snapshot.room_id);  // 清理旧的同步定时器
   std::lock_guard<std::mutex> lock(mutex_);  // 互斥锁
 
   // 清理旧场景（防止重复开始游戏导致映射残留）
@@ -244,22 +333,31 @@ bool GameManager::HandlePlayerInput(uint32_t player_id,
 
 // 移除玩家
 void GameManager::RemovePlayer(uint32_t player_id) {
-  std::lock_guard<std::mutex> lock(mutex_);            // 互斥锁
-  const auto mapping = player_scene_.find(player_id);  // 玩家对应房间map
-  if (mapping == player_scene_.end()) {                // 没找到
-    return;
+  bool scene_removed = false;
+  uint32_t room_id = 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);            // 互斥锁
+    const auto mapping = player_scene_.find(player_id);  // 玩家对应房间map
+    if (mapping == player_scene_.end()) {                // 没找到
+      return;
+    }
+
+    room_id = mapping->second;     // 获取房间id
+    player_scene_.erase(mapping);  // 移除玩家对应的房间id
+
+    auto scene_it = scenes_.find(room_id);  // 房间对应会话map
+    if (scene_it == scenes_.end()) {        // 没找到
+      return;
+    }
+
+    scene_it->second.players.erase(player_id);  // 移除玩家对应会话中的玩家信息
+    if (scene_it->second.players.empty()) {     // 会话中玩家数量为0
+      scenes_.erase(scene_it);                  // 移除该会话
+      scene_removed = true;
+    }
   }
 
-  const uint32_t room_id = mapping->second;  // 获取房间id
-  player_scene_.erase(mapping);              // 移除玩家对应的房间id
-
-  auto scene_it = scenes_.find(room_id);  // 房间对应会话map
-  if (scene_it == scenes_.end()) {        // 没找到
-    return;
-  }
-
-  scene_it->second.players.erase(player_id);  // 移除玩家对应会话中的玩家信息
-  if (scene_it->second.players.empty()) {     // 会话中玩家数量为0
-    scenes_.erase(scene_it);                  // 移除该会话
+  if (scene_removed) {
+    StopStateSyncLoop(room_id);
   }
 }

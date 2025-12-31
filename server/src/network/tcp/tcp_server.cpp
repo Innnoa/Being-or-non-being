@@ -122,7 +122,12 @@ void TcpSession::read_body(std::size_t length) {
           read_header();
           return;
         }
-        spdlog::debug("包体解析完成");
+        if (spdlog::should_log(spdlog::level::debug)) {
+          spdlog::debug(
+              "包体解析完成: {}，payload长度 {} bytes，包体总长度 {} bytes",
+              MessageTypeToString(packet.msg_type()), packet.payload().size(),
+              length);
+        }
         handle_packet(packet);
         if (closed_ || !socket_.is_open()) {  // 已经主动断开，不再继续读
           return;
@@ -326,6 +331,7 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
                                                  &sync)) {  // 构建完整游戏状态
         BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC,
                         sync);  // 广播游戏状态同步
+        GameManager::Instance().StartStateSyncLoop(snapshot->room_id);
       }
       spdlog::info("房间 {} 游戏开始", snapshot->room_id);
       break;
@@ -366,6 +372,16 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
 void TcpSession::send_packet(const lawnmower::Packet& packet) {  // 发包
   const std::string data = packet.SerializeAsString();
   const uint32_t net_len = htonl(static_cast<uint32_t>(data.size()));
+
+  if (spdlog::should_log(spdlog::level::debug)) {
+    const auto payload_len = packet.payload().size();
+    const auto body_len = data.size();
+    spdlog::debug(
+        "发送包 {}，payload长度 {} bytes，序列化后长度 {} bytes（含4字节包长总计 {} "
+        "bytes）",
+        MessageTypeToString(packet.msg_type()), payload_len, body_len,
+        body_len + sizeof(net_len));
+  }
 
   std::string framed;
   framed.resize(sizeof(net_len) + data.size());
