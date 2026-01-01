@@ -13,6 +13,9 @@ constexpr float kSpawnRadius = 120.0f;
 constexpr int32_t kDefaultMaxHealth = 100;
 constexpr uint32_t kDefaultAttack = 10;
 constexpr uint32_t kDefaultExpToNext = 100;
+constexpr std::size_t kMaxPendingInputs = 64;
+constexpr float kDirectionEpsilonSq = 1e-6f;
+constexpr float kMaxDirectionLengthSq = 1.21f;  // 略放宽，防止浮点误差
 
 // 计算朝向
 float DegreesFromDirection(float x, float y) {
@@ -23,7 +26,6 @@ float DegreesFromDirection(float x, float y) {
   return angle_rad * 180.0f / std::numbers::pi_v<float>;
 }
 
-// 获取当前时间
 uint64_t NowMs() {
   return static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -43,93 +45,80 @@ GameManager::SceneConfig GameManager::BuildDefaultConfig() const {
   return SceneConfig{};  // 默认构造
 }
 
-// 构建时间戳
-lawnmower::Timestamp GameManager::BuildTimestamp() {
-  lawnmower::Timestamp ts;
-  ts.set_server_time(NowMs());
-  ts.set_tick(++tick_counter_);
-  return ts;
-}
+void GameManager::SetIoContext(asio::io_context* io) { io_context_ = io; }
 
-void GameManager::SetIoContext(asio::io_context* io) {
-  io_context_ = io;
-}
-
-void GameManager::ScheduleStateSync(
-    uint32_t room_id, std::chrono::milliseconds interval,
-    const std::shared_ptr<asio::steady_timer>& timer) {
+void GameManager::ScheduleGameTick(
+    uint32_t room_id, std::chrono::microseconds interval,
+    const std::shared_ptr<asio::steady_timer>& timer, float dt,
+    uint32_t ticks_per_sync) {
   if (!timer) {
     return;
   }
 
   timer->expires_after(interval);
-  timer->async_wait(
-      [this, room_id, interval, timer](const asio::error_code& ec) {
-        if (ec == asio::error::operation_aborted) {
-          return;
-        }
+  timer->async_wait([this, room_id, interval, timer, dt,
+                     ticks_per_sync](const asio::error_code& ec) {
+    if (ec == asio::error::operation_aborted) {
+      return;
+    }
 
-        lawnmower::S2C_GameStateSync sync;
-        if (!BuildFullState(room_id, &sync)) {
-          StopStateSyncLoop(room_id);
-          return;
-        }
-
-        const auto sessions = RoomManager::Instance().GetRoomSessions(room_id);
-        for (const auto& weak_session : sessions) {
-          if (auto session = weak_session.lock()) {
-            session->SendProto(lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC,
-                               sync);
-          }
-        }
-
-        ScheduleStateSync(room_id, interval, timer);
-      });
+    ProcessSceneTick(room_id, dt, ticks_per_sync);
+    ScheduleGameTick(room_id, interval, timer, dt, ticks_per_sync);
+  });
 }
 
-void GameManager::StartStateSyncLoop(uint32_t room_id) {
+void GameManager::StartGameLoop(uint32_t room_id) {
   if (io_context_ == nullptr) {
-    spdlog::warn("未设置 io_context，无法启动状态同步定时器");
+    spdlog::warn("未设置 io_context，无法启动游戏循环");
     return;
   }
+
+  std::shared_ptr<asio::steady_timer> timer;
+  uint32_t tick_rate = 60;
+  uint32_t state_sync_rate = 20;
+  float dt = 0.0f;
+  uint32_t ticks_per_sync = 1;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto scene_it = scenes_.find(room_id);
     if (scene_it == scenes_.end()) {
-      spdlog::warn("房间 {} 未找到场景，跳过状态同步定时器", room_id);
+      spdlog::warn("房间 {} 未找到场景，无法启动游戏循环", room_id);
       return;
     }
-  }
 
-  auto timer = std::make_shared<asio::steady_timer>(*io_context_);
-  {
-    std::lock_guard<std::mutex> lock(timer_mutex_);
-    auto it = sync_timers_.find(room_id);
-    if (it != sync_timers_.end()) {
-      it->second->cancel();
+    Scene& scene = scene_it->second;
+    tick_rate = std::max<uint32_t>(1, scene.config.tick_rate);
+    state_sync_rate = std::max<uint32_t>(1, scene.config.state_sync_rate);
+    dt = 1.0f / static_cast<float>(tick_rate);
+    ticks_per_sync = std::max<uint32_t>(1, tick_rate / state_sync_rate);
+
+    if (scene.loop_timer) {
+      scene.loop_timer->cancel();
     }
-    sync_timers_[room_id] = timer;
+    timer = std::make_shared<asio::steady_timer>(*io_context_);
+    scene.loop_timer = timer;
+    scene.tick = 0;
+    scene.ticks_since_sync = 0;
   }
 
-  // 测试期：固定 5 秒一次全量同步
-  const auto interval = std::chrono::seconds(5);
-  ScheduleStateSync(room_id, interval, timer);
-  spdlog::debug("房间 {} 启动状态同步定时器，间隔 {} ms", room_id,
-                std::chrono::duration_cast<std::chrono::milliseconds>(interval)
-                    .count());
+  const auto interval = std::chrono::microseconds(
+      static_cast<int64_t>(1'000'000.0 / static_cast<double>(tick_rate)));
+  ScheduleGameTick(room_id, interval, timer, dt, ticks_per_sync);
+  spdlog::debug("房间 {} 启动游戏循环，tick_rate={}，state_sync_rate={}",
+                room_id, tick_rate, state_sync_rate);
 }
 
-void GameManager::StopStateSyncLoop(uint32_t room_id) {
+void GameManager::StopGameLoop(uint32_t room_id) {
   std::shared_ptr<asio::steady_timer> timer;
   {
-    std::lock_guard<std::mutex> lock(timer_mutex_);
-    auto it = sync_timers_.find(room_id);
-    if (it == sync_timers_.end()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto scene_it = scenes_.find(room_id);
+    if (scene_it == scenes_.end()) {
       return;
     }
-    timer = it->second;
-    sync_timers_.erase(it);
+    timer = scene_it->second.loop_timer;
+    scene_it->second.loop_timer.reset();
   }
 
   if (timer) {
@@ -185,6 +174,7 @@ void GameManager::PlacePlayers(const RoomManager::RoomSnapshot& snapshot,
     runtime.state.set_buff_id(0);
     runtime.state.set_attack_speed(1);
     runtime.state.set_move_speed(scene->config.move_speed);
+    runtime.state.set_last_processed_input_seq(0);
 
     // 将玩家对应玩家信息插入会话
     scene->players.emplace(player.player_id, std::move(runtime));
@@ -195,7 +185,7 @@ void GameManager::PlacePlayers(const RoomManager::RoomSnapshot& snapshot,
 // 创建场景
 lawnmower::SceneInfo GameManager::CreateScene(
     const RoomManager::RoomSnapshot& snapshot) {
-  StopStateSyncLoop(snapshot.room_id);  // 清理旧的同步定时器
+  StopGameLoop(snapshot.room_id);            // 清理旧的同步定时器
   std::lock_guard<std::mutex> lock(mutex_);  // 互斥锁
 
   // 清理旧场景（防止重复开始游戏导致映射残留）
@@ -240,22 +230,126 @@ bool GameManager::BuildFullState(uint32_t room_id,
   }
 
   sync->Clear();
-  *sync->mutable_sync_time() = BuildTimestamp();  // 设置新同步时间
-  sync->set_room_id(room_id);                     // 设置房间id
+  auto* ts = sync->mutable_sync_time();
+  ts->set_server_time(NowMs());
+  ts->set_tick(static_cast<uint32_t>(scene_it->second.tick));  // 当前逻辑帧
+  sync->set_room_id(room_id);                                  // 设置房间id
 
   const Scene& scene = scene_it->second;
   for (const auto& [_, runtime] : scene.players) {
-    *sync->add_players() = runtime.state;
+    auto* player_state = sync->add_players();
+    *player_state = runtime.state;
+    player_state->set_last_processed_input_seq(runtime.last_input_seq);
   }
   return true;
 }
 
-// 操纵玩家输入
+void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
+                                   uint32_t ticks_per_sync) {
+  lawnmower::S2C_GameStateSync sync;
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto scene_it = scenes_.find(room_id);
+    if (scene_it == scenes_.end()) {
+      return;
+    }
+
+    Scene& scene = scene_it->second;
+    bool has_dirty = false;
+
+    for (auto& [_, runtime] : scene.players) {
+      bool moved = false;
+      bool consumed_input = false;
+
+      while (!runtime.pending_inputs.empty()) {
+        const auto input = runtime.pending_inputs.front();
+        runtime.pending_inputs.pop_front();
+        consumed_input = true;
+
+        const float dx_raw = input.move_direction().x();
+        const float dy_raw = input.move_direction().y();
+        const float len_sq = dx_raw * dx_raw + dy_raw * dy_raw;
+        if (len_sq < kDirectionEpsilonSq) {
+          continue;
+        }
+        const float len = std::sqrt(len_sq);
+        const float dx = dx_raw / len;
+        const float dy = dy_raw / len;
+
+        const float speed = runtime.state.move_speed() > 0.0f
+                                ? runtime.state.move_speed()
+                                : scene.config.move_speed;
+
+        auto* position = runtime.state.mutable_position();
+        const float new_x = std::clamp(position->x() + dx * speed * dt, 0.0f,
+                                       static_cast<float>(scene.config.width));
+        const float new_y = std::clamp(position->y() + dy * speed * dt, 0.0f,
+                                       static_cast<float>(scene.config.height));
+
+        if (std::abs(new_x - position->x()) > 1e-4f ||
+            std::abs(new_y - position->y()) > 1e-4f) {
+          moved = true;
+        }
+
+        position->set_x(new_x);
+        position->set_y(new_y);
+        runtime.state.set_rotation(DegreesFromDirection(dx, dy));
+
+        if (input.input_seq() > runtime.last_input_seq) {
+          runtime.last_input_seq = input.input_seq();
+        }
+      }
+
+      if (moved || consumed_input) {
+        runtime.dirty = true;
+      }
+      has_dirty = has_dirty || runtime.dirty;
+    }
+
+    scene.tick += 1;
+    scene.ticks_since_sync += 1;
+
+    const bool should_sync =
+        has_dirty && scene.ticks_since_sync >= ticks_per_sync;
+    if (!should_sync) {
+      return;
+    }
+
+    auto* ts = sync.mutable_sync_time();
+    ts->set_server_time(NowMs());
+    ts->set_tick(static_cast<uint32_t>(scene.tick));
+    sync.set_room_id(room_id);
+
+    for (auto& [_, runtime] : scene.players) {
+      if (!runtime.dirty) {
+        continue;
+      }
+      runtime.state.set_last_processed_input_seq(runtime.last_input_seq);
+      *sync.add_players() = runtime.state;
+      runtime.dirty = false;
+    }
+
+    scene.ticks_since_sync = 0;
+  }
+
+  if (sync.players_size() == 0) {
+    return;
+  }
+
+  const auto sessions = RoomManager::Instance().GetRoomSessions(room_id);
+  for (const auto& weak_session : sessions) {
+    if (auto session = weak_session.lock()) {
+      session->SendProto(lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+    }
+  }
+}
+
+// 操纵玩家输入：只入队，逻辑帧内处理
 bool GameManager::HandlePlayerInput(uint32_t player_id,
                                     const lawnmower::C2S_PlayerInput& input,
-                                    lawnmower::S2C_GameStateSync* sync,
                                     uint32_t* room_id) {
-  if (sync == nullptr || room_id == nullptr) {
+  if (room_id == nullptr) {
     return false;
   }
 
@@ -285,48 +379,19 @@ bool GameManager::HandlePlayerInput(uint32_t player_id,
   if (seq != 0 && seq <= runtime.last_input_seq) {
     return false;
   }
-  if (seq != 0) {
-    runtime.last_input_seq = seq;
-  }
 
   const float dx_raw = input.move_direction().x();  // 获取x轴向量
   const float dy_raw = input.move_direction().y();  // 获取y轴向量
-  const float len =
-      std::sqrt(dx_raw * dx_raw + dy_raw * dy_raw);  // 计算位移长度
-  if (len < 1e-4f) {                                 // 位移小于0.00001
+  const float len_sq = dx_raw * dx_raw + dy_raw * dy_raw;
+  if (len_sq < kDirectionEpsilonSq || len_sq > kMaxDirectionLengthSq) {
     return false;
   }
 
-  const float dx = dx_raw / len;  // 计算实际x轴位移情况
-  const float dy = dy_raw / len;  // 计算实际y轴唯一情况
-
-  float dt_sec = 1.0f / static_cast<float>(scene.config.tick_rate);
-  if (input.delta_ms() > 0) {
-    dt_sec = static_cast<float>(input.delta_ms()) / 1000.0f;
+  if (runtime.pending_inputs.size() >= kMaxPendingInputs) {
+    runtime.pending_inputs.pop_front();  // 丢弃最旧输入，防止队列过长
   }
-  dt_sec = std::clamp(dt_sec, 0.0f, 0.25f);
 
-  const float speed = runtime.state.move_speed() > 0.0f
-                          ? runtime.state.move_speed()
-                          : scene.config.move_speed;  // 计算速度？
-
-  auto* position = runtime.state.mutable_position();  // 位置
-  const float new_x =
-      std::clamp(position->x() + dx * speed * dt_sec, 0.0f,
-                 static_cast<float>(scene.config.width));  // 新x
-  const float new_y =
-      std::clamp(position->y() + dy * speed * dt_sec, 0.0f,
-                 static_cast<float>(scene.config.height));  // 新y
-
-  position->set_x(new_x);                                    // 设置新x
-  position->set_y(new_y);                                    // 设置新y
-  runtime.state.set_rotation(DegreesFromDirection(dx, dy));  // 设置朝向
-
-  sync->Clear();
-  *sync->mutable_sync_time() = BuildTimestamp();  // 新的同步时间
-  sync->set_room_id(target_room_id);              // 设置房间id
-  *sync->add_players() = runtime.state;           // 添加玩家？
-
+  runtime.pending_inputs.push_back(input);
   *room_id = target_room_id;
   return true;
 }
@@ -335,6 +400,7 @@ bool GameManager::HandlePlayerInput(uint32_t player_id,
 void GameManager::RemovePlayer(uint32_t player_id) {
   bool scene_removed = false;
   uint32_t room_id = 0;
+  std::shared_ptr<asio::steady_timer> timer;
   {
     std::lock_guard<std::mutex> lock(mutex_);            // 互斥锁
     const auto mapping = player_scene_.find(player_id);  // 玩家对应房间map
@@ -352,12 +418,15 @@ void GameManager::RemovePlayer(uint32_t player_id) {
 
     scene_it->second.players.erase(player_id);  // 移除玩家对应会话中的玩家信息
     if (scene_it->second.players.empty()) {     // 会话中玩家数量为0
-      scenes_.erase(scene_it);                  // 移除该会话
+      timer = scene_it->second.loop_timer;
+      scenes_.erase(scene_it);  // 移除该会话
       scene_removed = true;
     }
   }
 
   if (scene_removed) {
-    StopStateSyncLoop(room_id);
+    if (timer) {
+      timer->cancel();
+    }
   }
 }

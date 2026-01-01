@@ -11,6 +11,7 @@
 namespace {
 constexpr std::size_t kMaxPacketSize = 64 * 1024;  // 设定最大包大小
 
+// 类型转字符串
 std::string MessageTypeToString(lawnmower::MessageType type) {
   const std::string name = lawnmower::MessageType_Name(type);
   if (!name.empty()) {
@@ -19,9 +20,10 @@ std::string MessageTypeToString(lawnmower::MessageType type) {
   return "UNKNOWN(" + std::to_string(static_cast<int>(type)) + ")";
 }
 
+// 向房间广播
 void BroadcastToRoom(const std::vector<std::weak_ptr<TcpSession>>& sessions,
                      lawnmower::MessageType type,
-                     const google::protobuf::Message& message) {  // 向房间广播
+                     const google::protobuf::Message& message) {
   for (const auto& weak_session : sessions) {
     if (auto session = weak_session.lock()) {
       session->SendProto(type, message);
@@ -30,9 +32,10 @@ void BroadcastToRoom(const std::vector<std::weak_ptr<TcpSession>>& sessions,
 }
 }  // namespace
 
-std::atomic<uint32_t> TcpSession::next_player_id_{
-    1};  // 用于给palyer赋id,next_player_id_是静态的
-std::atomic<uint32_t> TcpSession::active_sessions_{0};  // 当前活跃会话数
+// 用于给palyer赋id，next_player_id_是静态的
+std::atomic<uint32_t> TcpSession::next_player_id_{1};
+// 当前活跃会话数
+std::atomic<uint32_t> TcpSession::active_sessions_{0};
 
 TcpSession::TcpSession(tcp::socket socket)
     : socket_(std::move(socket)) {  // 构造函数
@@ -331,7 +334,7 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
                                                  &sync)) {  // 构建完整游戏状态
         BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC,
                         sync);  // 广播游戏状态同步
-        GameManager::Instance().StartStateSyncLoop(snapshot->room_id);
+        GameManager::Instance().StartGameLoop(snapshot->room_id);
       }
       spdlog::info("房间 {} 游戏开始", snapshot->room_id);
       break;
@@ -351,14 +354,10 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
       // 服务器侧强制使用会话的 player_id，防止伪造
       input.set_player_id(player_id_);
 
-      lawnmower::S2C_GameStateSync sync;  // 游戏状态同步
       uint32_t room_id = 0;
-      if (GameManager::Instance().HandlePlayerInput(player_id_, input, &sync,
-                                                    &room_id)) {
-        const auto sessions = RoomManager::Instance().GetRoomSessions(
-            room_id);  // 单例获取房间会话
-        BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC,
-                        sync);  // 广播游戏状态同步
+      if (!GameManager::Instance().HandlePlayerInput(player_id_, input,
+                                                     &room_id)) {
+        spdlog::debug("玩家 {} 输入被拒绝或未找到场景", player_id_);
       }
       break;
     }
@@ -377,7 +376,8 @@ void TcpSession::send_packet(const lawnmower::Packet& packet) {  // 发包
     const auto payload_len = packet.payload().size();
     const auto body_len = data.size();
     spdlog::debug(
-        "发送包 {}，payload长度 {} bytes，序列化后长度 {} bytes（含4字节包长总计 {} "
+        "发送包 {}，payload长度 {} bytes，序列化后长度 {} "
+        "bytes（含4字节包长总计 {} "
         "bytes）",
         MessageTypeToString(packet.msg_type()), payload_len, body_len,
         body_len + sizeof(net_len));
