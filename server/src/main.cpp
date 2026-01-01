@@ -10,6 +10,7 @@ int main() {
     GameManager::Instance().SetIoContext(&io);
     TcpServer server(io, 7777);
 
+    // debug 模式
     spdlog::set_level(spdlog::level::debug);
     // Keep the same timestamp/level/message layout, but wrap the level with
     // color markers so the console sink prints it with ANSI colors when the
