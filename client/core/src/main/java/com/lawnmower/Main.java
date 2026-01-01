@@ -65,6 +65,7 @@ public class Main extends Game {
                     Message.MessageType type = packet.getMsgType();
                     Object payload = null;
 
+                    Gdx.app.log("当前接受",type.name());
                     switch (type) {
                         case MSG_S2C_LOGIN_RESULT:
                             payload = Message.S2C_LoginResult.parseFrom(packet.getPayload());

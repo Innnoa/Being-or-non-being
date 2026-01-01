@@ -5,8 +5,7 @@ import com.google.protobuf.ByteString;
 public final class Config {
 
     // =============== 网络配置 ===============
-    /** 服务器地址（开发时用 localhost，发布时改 IP 或域名） */
-    public static final String SERVER_HOST = "111.228.8.174";
+    public static final String SERVER_HOST = "10.144.2.101";
 
     /** 服务器端口 */
     public static final int SERVER_PORT = 7777;

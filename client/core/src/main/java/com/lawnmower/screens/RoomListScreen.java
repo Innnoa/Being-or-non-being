@@ -8,7 +8,6 @@ import com.badlogic.gdx.graphics.g2d.TextureAtlas;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.scenes.scene2d.*;
 import com.badlogic.gdx.Screen;
-import com.badlogic.gdx.scenes.scene2d.actions.Actions;
 import com.badlogic.gdx.scenes.scene2d.ui.*;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
@@ -327,7 +326,6 @@ public class RoomListScreen implements Screen {
 
     private void openCreateRoomDialog() {
         // === 1. 创建 DropPopup 容器 ===
-        // 目标位置：和你原来 window.setPosition(750, 900) 一致
         float targetX = 750;
         float targetY = 400;
         DropPopup dropPopup = new DropPopup(skin, "background/createRoomLong.png", targetX, targetY);
