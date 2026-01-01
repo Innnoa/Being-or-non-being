@@ -6,6 +6,7 @@ import com.badlogic.gdx.Screen;
 import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 
@@ -93,7 +94,7 @@ public class GameScreen implements Screen {
             pixmap.setColor(Color.RED); // 改成红色，便于识别
             pixmap.fillCircle(32, 32, 30); // 画个圆，不是纯色块
             playerTexture = new Texture(pixmap);
-            playerTextureRegion = new TextureRegion(playerTexture); // ← 必须加这行！
+            playerTextureRegion = new TextureRegion(playerTexture);
             pixmap.dispose();
         }
 
@@ -116,6 +117,21 @@ public class GameScreen implements Screen {
         applyInputLocally(predictedPosition, predictedRotation, input, delta);
     }
 
+    private void clampPositionToMap(Vector2 position) {
+        if (playerTextureRegion == null) {
+            return; // 纹理未加载，无法计算
+        }
+
+        float halfWidth = playerTextureRegion.getRegionWidth() / 2.0f;
+        float halfHeight = playerTextureRegion.getRegionHeight() / 2.0f;
+
+        // X轴限制: [halfWidth, WORLD_WIDTH - halfWidth]
+        position.x = MathUtils.clamp(position.x, halfWidth, WORLD_WIDTH - halfWidth);
+        // Y轴限制: [halfHeight, WORLD_HEIGHT - halfHeight]
+        position.y = MathUtils.clamp(position.y, halfHeight, WORLD_HEIGHT - halfHeight);
+    }
+
+
     private Vector2 getMovementInput() {
         Vector2 input = new Vector2();
         if (Gdx.input.isKeyPressed(Input.Keys.W)) input.y += 1;
@@ -130,6 +146,7 @@ public class GameScreen implements Screen {
             float speed = PLAYER_SPEED;
             // 可从 serverPlayerStates 获取动态速度（略）
             pos.add(input.moveDir.x * speed * delta, input.moveDir.y * speed * delta);
+            clampPositionToMap(pos);
         }
         // TODO攻击逻辑可扩展
     }
@@ -152,6 +169,7 @@ public class GameScreen implements Screen {
 
         // === 3. 立即预测（应用到 predictedPosition）===
         applyInputLocally(predictedPosition, predictedRotation, input, delta);
+        clampPositionToMap(predictedPosition);
 
         // === 4. 发送新输入到服务器 ===
         sendPlayerInputToServer(input); // 修改此方法接收 input
@@ -160,11 +178,12 @@ public class GameScreen implements Screen {
         Gdx.gl.glClearColor(0, 0, 0, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
+        clampPositionToMap(predictedPosition);
         camera.position.set(predictedPosition.x, predictedPosition.y, 0);
         camera.update();
+
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
-
         batch.draw(backgroundTexture, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
         float width = playerTextureRegion.getRegionWidth();
@@ -183,6 +202,8 @@ public class GameScreen implements Screen {
         int myId = game.getPlayerId();
         for (Message.PlayerState state : serverPlayerStates.values()) {
             if (state.getPlayerId() == myId || !state.getIsAlive()) continue;
+            Vector2 otherPos = new Vector2(state.getPosition().getX(), state.getPosition().getY());
+            clampPositionToMap(otherPos);
             batch.draw(playerTextureRegion,
                     state.getPosition().getX() - width / 2,
                     state.getPosition().getY() - height / 2,
@@ -243,6 +264,7 @@ public class GameScreen implements Screen {
                 selfStateFromServer.getPosition().getX(),
                 selfStateFromServer.getPosition().getY()
         );
+        clampPositionToMap(serverPos);
         PlayerStateSnapshot snapshot = new PlayerStateSnapshot(
                 serverPos,
                 selfStateFromServer.getRotation(),
@@ -262,6 +284,8 @@ public class GameScreen implements Screen {
         // 1. 回滚到服务器状态
         predictedPosition.set(serverSnapshot.position);
         predictedRotation = serverSnapshot.rotation;
+
+        clampPositionToMap(predictedPosition);
 
         // 2. 重放未确认输入（seq > server 已处理的）
         for (PlayerInputCommand input : unconfirmedInputs.values()) {
