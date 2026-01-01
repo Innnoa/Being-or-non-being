@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <numbers>
+#include <regex>
 #include <spdlog/spdlog.h>
 
 #include "network/tcp/tcp_server.hpp"
@@ -15,7 +17,8 @@ constexpr uint32_t kDefaultAttack = 10;
 constexpr uint32_t kDefaultExpToNext = 100;
 constexpr std::size_t kMaxPendingInputs = 64;
 constexpr float kDirectionEpsilonSq = 1e-6f;
-constexpr float kMaxDirectionLengthSq = 1.21f;  // 略放宽，防止浮点误差
+constexpr float kMaxDirectionLengthSq = 1.21f;    // 略放宽，防止浮点误差
+constexpr uint32_t kFullSyncIntervalTicks = 300;  // ~5s @60Hz
 
 // 计算朝向
 float DegreesFromDirection(float x, float y) {
@@ -32,6 +35,21 @@ uint64_t NowMs() {
           std::chrono::system_clock::now().time_since_epoch())
           .count());
 }
+
+void FillSyncTiming(uint32_t room_id, uint64_t tick,
+                    lawnmower::S2C_GameStateSync* sync) {
+  if (sync == nullptr) {
+    return;
+  }
+
+  const uint64_t now_ms = NowMs();
+  sync->set_room_id(room_id);
+  sync->set_server_time_ms(now_ms);
+
+  auto* ts = sync->mutable_sync_time();
+  ts->set_server_time(now_ms);
+  ts->set_tick(static_cast<uint32_t>(tick));
+}
 }  // namespace
 
 // 单例构造
@@ -42,7 +60,7 @@ GameManager& GameManager::Instance() {
 
 // 构建默认配置
 GameManager::SceneConfig GameManager::BuildDefaultConfig() const {
-  return SceneConfig{};  // 默认构造
+  return LoadConfigFromFile();
 }
 
 void GameManager::SetIoContext(asio::io_context* io) { io_context_ = io; }
@@ -50,20 +68,21 @@ void GameManager::SetIoContext(asio::io_context* io) { io_context_ = io; }
 void GameManager::ScheduleGameTick(
     uint32_t room_id, std::chrono::microseconds interval,
     const std::shared_ptr<asio::steady_timer>& timer, float dt,
-    uint32_t ticks_per_sync) {
+    double ticks_per_sync, uint32_t full_sync_interval_ticks) {
   if (!timer) {
     return;
   }
 
   timer->expires_after(interval);
-  timer->async_wait([this, room_id, interval, timer, dt,
-                     ticks_per_sync](const asio::error_code& ec) {
+  timer->async_wait([this, room_id, interval, timer, dt, ticks_per_sync,
+                     full_sync_interval_ticks](const asio::error_code& ec) {
     if (ec == asio::error::operation_aborted) {
       return;
     }
 
-    ProcessSceneTick(room_id, dt, ticks_per_sync);
-    ScheduleGameTick(room_id, interval, timer, dt, ticks_per_sync);
+    ProcessSceneTick(room_id, dt, ticks_per_sync, full_sync_interval_ticks);
+    ScheduleGameTick(room_id, interval, timer, dt, ticks_per_sync,
+                     full_sync_interval_ticks);
   });
 }
 
@@ -77,7 +96,7 @@ void GameManager::StartGameLoop(uint32_t room_id) {
   uint32_t tick_rate = 60;
   uint32_t state_sync_rate = 20;
   float dt = 0.0f;
-  uint32_t ticks_per_sync = 1;
+  double ticks_per_sync = 1.0;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -91,7 +110,9 @@ void GameManager::StartGameLoop(uint32_t room_id) {
     tick_rate = std::max<uint32_t>(1, scene.config.tick_rate);
     state_sync_rate = std::max<uint32_t>(1, scene.config.state_sync_rate);
     dt = 1.0f / static_cast<float>(tick_rate);
-    ticks_per_sync = std::max<uint32_t>(1, tick_rate / state_sync_rate);
+    ticks_per_sync =
+        std::max<double>(1.0, static_cast<double>(tick_rate) /
+                                  static_cast<double>(state_sync_rate));
 
     if (scene.loop_timer) {
       scene.loop_timer->cancel();
@@ -99,12 +120,14 @@ void GameManager::StartGameLoop(uint32_t room_id) {
     timer = std::make_shared<asio::steady_timer>(*io_context_);
     scene.loop_timer = timer;
     scene.tick = 0;
-    scene.ticks_since_sync = 0;
+    scene.sync_accumulator = 0.0;
+    scene.ticks_since_full_sync = 0;
   }
 
   const auto interval = std::chrono::microseconds(
       static_cast<int64_t>(1'000'000.0 / static_cast<double>(tick_rate)));
-  ScheduleGameTick(room_id, interval, timer, dt, ticks_per_sync);
+  ScheduleGameTick(room_id, interval, timer, dt, ticks_per_sync,
+                   kFullSyncIntervalTicks);
   spdlog::debug("房间 {} 启动游戏循环，tick_rate={}，state_sync_rate={}",
                 room_id, tick_rate, state_sync_rate);
 }
@@ -230,10 +253,7 @@ bool GameManager::BuildFullState(uint32_t room_id,
   }
 
   sync->Clear();
-  auto* ts = sync->mutable_sync_time();
-  ts->set_server_time(NowMs());
-  ts->set_tick(static_cast<uint32_t>(scene_it->second.tick));  // 当前逻辑帧
-  sync->set_room_id(room_id);                                  // 设置房间id
+  FillSyncTiming(room_id, scene_it->second.tick, sync);
 
   const Scene& scene = scene_it->second;
   for (const auto& [_, runtime] : scene.players) {
@@ -245,7 +265,8 @@ bool GameManager::BuildFullState(uint32_t room_id,
 }
 
 void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
-                                   uint32_t ticks_per_sync) {
+                                   double ticks_per_sync,
+                                   uint32_t full_sync_interval_ticks) {
   lawnmower::S2C_GameStateSync sync;
 
   {
@@ -262,7 +283,7 @@ void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
       bool moved = false;
       bool consumed_input = false;
 
-      while (!runtime.pending_inputs.empty()) {
+      if (!runtime.pending_inputs.empty()) {
         const auto input = runtime.pending_inputs.front();
         runtime.pending_inputs.pop_front();
         consumed_input = true;
@@ -270,31 +291,32 @@ void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
         const float dx_raw = input.move_direction().x();
         const float dy_raw = input.move_direction().y();
         const float len_sq = dx_raw * dx_raw + dy_raw * dy_raw;
-        if (len_sq < kDirectionEpsilonSq) {
-          continue;
+        if (len_sq >= kDirectionEpsilonSq) {
+          const float len = std::sqrt(len_sq);
+          const float dx = dx_raw / len;
+          const float dy = dy_raw / len;
+
+          const float speed = runtime.state.move_speed() > 0.0f
+                                  ? runtime.state.move_speed()
+                                  : scene.config.move_speed;
+
+          auto* position = runtime.state.mutable_position();
+          const float new_x =
+              std::clamp(position->x() + dx * speed * dt, 0.0f,
+                         static_cast<float>(scene.config.width));
+          const float new_y =
+              std::clamp(position->y() + dy * speed * dt, 0.0f,
+                         static_cast<float>(scene.config.height));
+
+          if (std::abs(new_x - position->x()) > 1e-4f ||
+              std::abs(new_y - position->y()) > 1e-4f) {
+            moved = true;
+          }
+
+          position->set_x(new_x);
+          position->set_y(new_y);
+          runtime.state.set_rotation(DegreesFromDirection(dx, dy));
         }
-        const float len = std::sqrt(len_sq);
-        const float dx = dx_raw / len;
-        const float dy = dy_raw / len;
-
-        const float speed = runtime.state.move_speed() > 0.0f
-                                ? runtime.state.move_speed()
-                                : scene.config.move_speed;
-
-        auto* position = runtime.state.mutable_position();
-        const float new_x = std::clamp(position->x() + dx * speed * dt, 0.0f,
-                                       static_cast<float>(scene.config.width));
-        const float new_y = std::clamp(position->y() + dy * speed * dt, 0.0f,
-                                       static_cast<float>(scene.config.height));
-
-        if (std::abs(new_x - position->x()) > 1e-4f ||
-            std::abs(new_y - position->y()) > 1e-4f) {
-          moved = true;
-        }
-
-        position->set_x(new_x);
-        position->set_y(new_y);
-        runtime.state.set_rotation(DegreesFromDirection(dx, dy));
 
         if (input.input_seq() > runtime.last_input_seq) {
           runtime.last_input_seq = input.input_seq();
@@ -308,29 +330,30 @@ void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
     }
 
     scene.tick += 1;
-    scene.ticks_since_sync += 1;
+    scene.sync_accumulator += 1.0;
+    scene.ticks_since_full_sync += 1;
 
-    const bool should_sync =
-        has_dirty && scene.ticks_since_sync >= ticks_per_sync;
-    if (!should_sync) {
+    const bool should_sync = scene.sync_accumulator >= ticks_per_sync;
+    if (should_sync) {
+      scene.sync_accumulator -= ticks_per_sync;
+    }
+    const bool force_full_sync =
+        full_sync_interval_ticks > 0 &&
+        scene.ticks_since_full_sync >= full_sync_interval_ticks;
+    const bool should_broadcast =
+        should_sync || force_full_sync || has_dirty;
+    if (!should_broadcast) {
       return;
     }
 
-    auto* ts = sync.mutable_sync_time();
-    ts->set_server_time(NowMs());
-    ts->set_tick(static_cast<uint32_t>(scene.tick));
-    sync.set_room_id(room_id);
+    FillSyncTiming(room_id, scene.tick, &sync);
 
     for (auto& [_, runtime] : scene.players) {
-      if (!runtime.dirty) {
-        continue;
-      }
       runtime.state.set_last_processed_input_seq(runtime.last_input_seq);
       *sync.add_players() = runtime.state;
       runtime.dirty = false;
     }
-
-    scene.ticks_since_sync = 0;
+    scene.ticks_since_full_sync = 0;
   }
 
   if (sync.players_size() == 0) {
@@ -429,4 +452,42 @@ void GameManager::RemovePlayer(uint32_t player_id) {
       timer->cancel();
     }
   }
+}
+GameManager::SceneConfig GameManager::LoadConfigFromFile() const {
+  SceneConfig cfg;
+  std::ifstream file("server/config/server_config.json");
+  if (!file.is_open()) {
+    return cfg;
+  }
+
+  std::string content((std::istreambuf_iterator<char>(file)),
+                      std::istreambuf_iterator<char>());
+
+  const auto extract_uint = [&content](const std::string& key, uint32_t* out) {
+    std::regex re("\"" + key + "\"\\s*:\\s*(\\d+)");
+    std::smatch match;
+    if (std::regex_search(content, match, re) && match.size() > 1) {
+      try {
+        *out = static_cast<uint32_t>(std::stoul(match[1].str()));
+      } catch (...) {
+      }
+    }
+  };
+
+  extract_uint("map_width", &cfg.width);
+  extract_uint("map_height", &cfg.height);
+  extract_uint("tick_rate", &cfg.tick_rate);
+  extract_uint("state_sync_rate", &cfg.state_sync_rate);
+
+  std::regex speed_re("\"move_speed\"\\s*:\\s*(\\d+\\.?\\d*)");
+  std::smatch speed_match;
+  if (std::regex_search(content, speed_match, speed_re) &&
+      speed_match.size() > 1) {
+    try {
+      cfg.move_speed = std::stof(speed_match[1].str());
+    } catch (...) {
+    }
+  }
+
+  return cfg;
 }

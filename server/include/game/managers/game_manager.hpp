@@ -64,16 +64,20 @@ class GameManager {
     std::unordered_map<uint32_t, PlayerRuntime>
         players;  // 玩家对应玩家运行状态
     uint64_t tick = 0;
-    uint32_t ticks_since_sync = 0;
+    double sync_accumulator = 0.0;
+    uint32_t ticks_since_full_sync = 0;
     std::shared_ptr<asio::steady_timer> loop_timer;
   };
 
   SceneConfig BuildDefaultConfig() const;
+  SceneConfig LoadConfigFromFile() const;
   void PlacePlayers(const RoomManager::RoomSnapshot& snapshot, Scene* scene);
-  void ProcessSceneTick(uint32_t room_id, float dt, uint32_t ticks_per_sync);
+  void ProcessSceneTick(uint32_t room_id, float dt, double ticks_per_sync,
+                        uint32_t full_sync_interval_ticks);
   void ScheduleGameTick(uint32_t room_id, std::chrono::microseconds interval,
                         const std::shared_ptr<asio::steady_timer>& timer,
-                        float dt, uint32_t ticks_per_sync);
+                        float dt, double ticks_per_sync,
+                        uint32_t full_sync_interval_ticks);
   void StopGameLoop(uint32_t room_id);
 
   mutable std::mutex mutex_;
