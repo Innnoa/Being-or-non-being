@@ -21,7 +21,7 @@ std::string MessageTypeToString(lawnmower::MessageType type) {
 
 void BroadcastToRoom(const std::vector<std::weak_ptr<TcpSession>>& sessions,
                      lawnmower::MessageType type,
-                     const google::protobuf::Message& message) {
+                     const google::protobuf::Message& message) {  // 向房间广播
   for (const auto& weak_session : sessions) {
     if (auto session = weak_session.lock()) {
       session->SendProto(type, message);
@@ -122,7 +122,12 @@ void TcpSession::read_body(std::size_t length) {
           read_header();
           return;
         }
-        spdlog::debug("包体解析完成");
+        if (spdlog::should_log(spdlog::level::debug)) {
+          spdlog::debug(
+              "包体解析完成: {}，payload长度 {} bytes，包体总长度 {} bytes",
+              MessageTypeToString(packet.msg_type()), packet.payload().size(),
+              length);
+        }
         handle_packet(packet);
         if (closed_ || !socket_.is_open()) {  // 已经主动断开，不再继续读
           return;
@@ -274,13 +279,13 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
       break;
     }
     case MessageType::MSG_C2S_SET_READY: {  // 设置准备状态
-      lawnmower::C2S_SetReady request;      // 设置准备状态反馈
+      lawnmower::C2S_SetReady request;
       if (!request.ParseFromString(packet.payload())) {
         spdlog::warn("解析设置准备状态包体失败");
         break;
       }
 
-      lawnmower::S2C_SetReadyResult result;
+      lawnmower::S2C_SetReadyResult result;  // 设置准备状态反馈
       if (player_id_ == 0) {
         result.set_success(false);
         result.set_message_ready("请先登录");
@@ -304,25 +309,29 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
         break;
       }
 
-      lawnmower::S2C_GameStart result;
-      auto snapshot =
-          RoomManager::Instance().TryStartGame(player_id_, &result);
+      lawnmower::S2C_GameStart result;  // 设置请求开始游戏反馈
+      auto snapshot = RoomManager::Instance().TryStartGame(
+          player_id_, &result);  // 单例尝试开始游戏
       if (!result.success()) {
         SendProto(MessageType::MSG_S2C_GAME_START, result);
         break;
       }
 
       const lawnmower::SceneInfo scene_info =
-          GameManager::Instance().CreateScene(*snapshot);
+          GameManager::Instance().CreateScene(*snapshot);  // 单例获取场景信息
       *result.mutable_scene() = scene_info;
 
-      const auto sessions =
-          RoomManager::Instance().GetRoomSessions(snapshot->room_id);
-      BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_START, result);
+      const auto sessions = RoomManager::Instance().GetRoomSessions(
+          snapshot->room_id);  // 单例获取房间会话
+      BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_START,
+                      result);  // 广播开始游戏
 
-      lawnmower::S2C_GameStateSync sync;
-      if (GameManager::Instance().BuildFullState(snapshot->room_id, &sync)) {
-        BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+      lawnmower::S2C_GameStateSync sync;  // 游戏状态同步
+      if (GameManager::Instance().BuildFullState(snapshot->room_id,
+                                                 &sync)) {  // 构建完整游戏状态
+        BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC,
+                        sync);  // 广播游戏状态同步
+        GameManager::Instance().StartStateSyncLoop(snapshot->room_id);
       }
       spdlog::info("房间 {} 游戏开始", snapshot->room_id);
       break;
@@ -342,13 +351,14 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
       // 服务器侧强制使用会话的 player_id，防止伪造
       input.set_player_id(player_id_);
 
-      lawnmower::S2C_GameStateSync sync;
+      lawnmower::S2C_GameStateSync sync;  // 游戏状态同步
       uint32_t room_id = 0;
       if (GameManager::Instance().HandlePlayerInput(player_id_, input, &sync,
                                                     &room_id)) {
-        const auto sessions =
-            RoomManager::Instance().GetRoomSessions(room_id);
-        BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+        const auto sessions = RoomManager::Instance().GetRoomSessions(
+            room_id);  // 单例获取房间会话
+        BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC,
+                        sync);  // 广播游戏状态同步
       }
       break;
     }
@@ -362,6 +372,16 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
 void TcpSession::send_packet(const lawnmower::Packet& packet) {  // 发包
   const std::string data = packet.SerializeAsString();
   const uint32_t net_len = htonl(static_cast<uint32_t>(data.size()));
+
+  if (spdlog::should_log(spdlog::level::debug)) {
+    const auto payload_len = packet.payload().size();
+    const auto body_len = data.size();
+    spdlog::debug(
+        "发送包 {}，payload长度 {} bytes，序列化后长度 {} bytes（含4字节包长总计 {} "
+        "bytes）",
+        MessageTypeToString(packet.msg_type()), payload_len, body_len,
+        body_len + sizeof(net_len));
+  }
 
   std::string framed;
   framed.resize(sizeof(net_len) + data.size());
