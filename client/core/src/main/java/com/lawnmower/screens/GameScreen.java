@@ -34,6 +34,8 @@ public class GameScreen implements Screen {
     private static final long MAX_EXTRAPOLATION_MS = 150L;
     private static final long INTERP_DELAY_MIN_MS = 80L;
     private static final long INTERP_DELAY_MAX_MS = 220L;
+    private static final int MAX_UNCONFIRMED_INPUTS = 240;
+    private static final long MAX_UNCONFIRMED_INPUT_AGE_MS = 1500L;
 
     private final Vector2 renderBuffer = new Vector2();
     private final Map<Integer, Message.PlayerState> serverPlayerStates = new HashMap<>();
@@ -125,6 +127,11 @@ public class GameScreen implements Screen {
 
         float width = playerTextureRegion.getRegionWidth();
         float height = playerTextureRegion.getRegionHeight();
+
+        long estimatedServerTimeMs = estimateServerTimeMs();
+        long renderServerTimeMs = estimatedServerTimeMs - computeRenderDelayMs();
+        renderRemotePlayers(renderServerTimeMs, width, height);
+
         batch.draw(playerTextureRegion,
                 predictedPosition.x - width / 2f,
                 predictedPosition.y - height / 2f,
@@ -135,10 +142,6 @@ public class GameScreen implements Screen {
                 1f,
                 1f,
                 predictedRotation);
-
-        long estimatedServerTimeMs = estimateServerTimeMs();
-        long renderServerTimeMs = estimatedServerTimeMs - computeRenderDelayMs();
-        renderRemotePlayers(renderServerTimeMs, width, height);
 
         batch.end();
     }
@@ -199,6 +202,7 @@ public class GameScreen implements Screen {
         float duration = Math.max(pendingInputDuration, MIN_COMMAND_DURATION);
         PlayerInputCommand cmd = new PlayerInputCommand(inputSequence++, pendingMoveDir, pendingAttack, duration);
         unconfirmedInputs.put(cmd.seq, cmd);
+        pruneUnconfirmedInputs();
         sendPlayerInputToServer(cmd);
         hasPendingInputChunk = false;
         pendingInputDuration = 0f;
@@ -212,8 +216,40 @@ public class GameScreen implements Screen {
                 Math.max(delta, MIN_COMMAND_DURATION)
         );
         unconfirmedInputs.put(idleCmd.seq, idleCmd);
+        pruneUnconfirmedInputs();
         sendPlayerInputToServer(idleCmd);
         idleAckSent = true;
+    }
+
+    private void pruneUnconfirmedInputs() {
+        if (unconfirmedInputs.isEmpty()) {
+                return;
+            }
+
+                long now = System.currentTimeMillis();
+        Iterator<Map.Entry<Integer, PlayerInputCommand>> iterator = unconfirmedInputs.entrySet().iterator();
+        boolean removed = false;
+        while (iterator.hasNext()) {
+                Map.Entry<Integer, PlayerInputCommand> entry = iterator.next();
+                PlayerInputCommand cmd = entry.getValue();
+                boolean tooOld = (now - cmd.timestampMs) > MAX_UNCONFIRMED_INPUT_AGE_MS;
+                boolean overflow = unconfirmedInputs.size() > MAX_UNCONFIRMED_INPUTS;
+                if (tooOld || overflow) {
+                        iterator.remove();
+                        removed = true;
+                        continue;
+                    }
+                if (!tooOld && !overflow) {
+                        break;
+                    }
+            }
+
+                if (removed) {
+                Gdx.app.log("GameScreen", "Pruned stale inputs, remaining=" + unconfirmedInputs.size());
+            }
+        if (unconfirmedInputs.isEmpty()) {
+                idleAckSent = true;
+            }
     }
 
     private void renderRemotePlayers(long renderServerTimeMs, float width, float height) {
@@ -389,6 +425,7 @@ public class GameScreen implements Screen {
     }
 
     private void pushRemoteSnapshot(int playerId, Vector2 position, float rotation, long serverTimeMs) {
+        clampPositionToMap(position);
         Deque<ServerPlayerSnapshot> queue = remotePlayerServerSnapshots
                 .computeIfAbsent(playerId, k -> new ArrayDeque<>());
 
@@ -438,6 +475,7 @@ public class GameScreen implements Screen {
         unconfirmedInputs.entrySet().removeIf(entry ->
                 entry.getKey() <= serverSnapshot.lastProcessedInputSeq
         );
+        pruneUnconfirmedInputs();
 
         hasReceivedInitialState = true;
         if (unconfirmedInputs.isEmpty()) {
@@ -489,7 +527,3 @@ public class GameScreen implements Screen {
         if (backgroundTexture != null) backgroundTexture.dispose();
     }
 }
-
-
-
-
