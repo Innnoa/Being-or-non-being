@@ -45,6 +45,7 @@ public class GameScreen implements Screen {
     private final Map<Integer, Boolean> remoteFacingRight = new HashMap<>();
     private final Map<Integer, Long> remotePlayerLastSeen = new HashMap<>();
     private final Map<Integer, PlayerInputCommand> unconfirmedInputs = new LinkedHashMap<>();
+    private final Map<Integer, Long> inputSendTimes = new HashMap<>();
     private final Queue<PlayerStateSnapshot> snapshotHistory = new ArrayDeque<>();
 
     private Main game;
@@ -66,9 +67,6 @@ public class GameScreen implements Screen {
     private final Vector2 displayPosition = new Vector2();
     private static final float DISPLAY_LERP_RATE = 12f;
     private static final float DISPLAY_SNAP_DISTANCE = 1f;
-    private static final float MAX_FRAME_DELTA = 1f / 30f;
-    private static final float DELTA_SMOOTH_ALPHA = 0.15f;
-    private float smoothedFrameDelta = 1f / 60f;
     private boolean isLocallyMoving = false;
 
     private boolean hasPendingInputChunk = false;
@@ -79,6 +77,17 @@ public class GameScreen implements Screen {
 
     private float clockOffsetMs = 0f;
     private float smoothedRttMs = 120f;
+
+    private static final float MAX_FRAME_DELTA = 1f / 30f;
+    private static final float DELTA_SMOOTH_ALPHA = 0.15f;
+    private float smoothedFrameDelta = 1f / 60f;
+
+    private double logicalClockRemainderMs = 0.0;
+    private long logicalTimeMs = 0L;
+
+    private static final float RENDER_DELAY_LERP = 0.25f;
+    private static final float MAX_RENDER_DELAY_STEP_MS = 15f;
+    private float renderDelayMs = 150f;
 
     public GameScreen(Main game) {
         this.game = Objects.requireNonNull(game);
@@ -120,6 +129,8 @@ public class GameScreen implements Screen {
 
     @Override
     public void render(float delta) {
+        advanceLogicalClock(delta);
+
         if (!hasReceivedInitialState || playerTextureRegion == null) {
             Gdx.gl.glClearColor(0.1f, 0.1f, 0.1f, 1);
             Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
@@ -163,6 +174,13 @@ public class GameScreen implements Screen {
         drawCharacterFrame(currentFrame, displayPosition.x, displayPosition.y, facingRight);
 
         batch.end();
+    }
+
+    private void advanceLogicalClock(float delta) {
+        double total = delta * 1000.0 + logicalClockRemainderMs;
+        long advance = (long) total;
+        logicalClockRemainderMs = total - advance;
+        logicalTimeMs += advance;
     }
 
     private float getStableDelta(float rawDelta) {
@@ -230,6 +248,7 @@ public class GameScreen implements Screen {
         float duration = Math.max(pendingInputDuration, MIN_COMMAND_DURATION);
         PlayerInputCommand cmd = new PlayerInputCommand(inputSequence++, pendingMoveDir, pendingAttack, duration);
         unconfirmedInputs.put(cmd.seq, cmd);
+        inputSendTimes.put(cmd.seq, logicalTimeMs);
         pruneUnconfirmedInputs();
         sendPlayerInputToServer(cmd);
         hasPendingInputChunk = false;
@@ -244,6 +263,7 @@ public class GameScreen implements Screen {
                 Math.max(delta, MIN_COMMAND_DURATION)
         );
         unconfirmedInputs.put(idleCmd.seq, idleCmd);
+        inputSendTimes.put(idleCmd.seq, logicalTimeMs);
         pruneUnconfirmedInputs();
         sendPlayerInputToServer(idleCmd);
         idleAckSent = true;
@@ -254,16 +274,18 @@ public class GameScreen implements Screen {
             return;
         }
 
-        long now = System.currentTimeMillis();
+        long now = logicalTimeMs;
         Iterator<Map.Entry<Integer, PlayerInputCommand>> iterator = unconfirmedInputs.entrySet().iterator();
         boolean removed = false;
         while (iterator.hasNext()) {
             Map.Entry<Integer, PlayerInputCommand> entry = iterator.next();
-            PlayerInputCommand cmd = entry.getValue();
-            boolean tooOld = (now - cmd.timestampMs) > MAX_UNCONFIRMED_INPUT_AGE_MS;
+            int seq = entry.getKey();
+            long sentAt = inputSendTimes.getOrDefault(seq, entry.getValue().timestampMs);
+            boolean tooOld = (now - sentAt) > MAX_UNCONFIRMED_INPUT_AGE_MS;
             boolean overflow = unconfirmedInputs.size() > MAX_UNCONFIRMED_INPUTS;
             if (tooOld || overflow) {
                 iterator.remove();
+                inputSendTimes.remove(seq);
                 removed = true;
                 continue;
             }
@@ -337,14 +359,16 @@ public class GameScreen implements Screen {
     }
 
     private long computeRenderDelayMs() {
-        float estimate = smoothedRttMs * 0.5f + 50f;
-        if (Float.isNaN(estimate) || Float.isInfinite(estimate)) {
-            estimate = 120f;
+        float target = smoothedRttMs * 0.5f + 50f;
+        if (Float.isNaN(target) || Float.isInfinite(target)) {
+            target = 120f;
         }
-        long delay = Math.round(estimate);
-        delay = Math.max(delay, INTERP_DELAY_MIN_MS);
-        delay = Math.min(delay, INTERP_DELAY_MAX_MS);
-        return delay;
+        target = MathUtils.clamp(target, INTERP_DELAY_MIN_MS, INTERP_DELAY_MAX_MS);
+        float delta = target - renderDelayMs;
+        delta = MathUtils.clamp(delta, -MAX_RENDER_DELAY_STEP_MS, MAX_RENDER_DELAY_STEP_MS);
+        renderDelayMs = MathUtils.clamp(renderDelayMs + delta * RENDER_DELAY_LERP,
+                INTERP_DELAY_MIN_MS, INTERP_DELAY_MAX_MS);
+        return Math.round(renderDelayMs);
     }
 
     private long estimateServerTimeMs() {
@@ -518,7 +542,13 @@ public class GameScreen implements Screen {
     private void reconcileWithServer(PlayerStateSnapshot serverSnapshot) {
         PlayerInputCommand acknowledged = unconfirmedInputs.get(serverSnapshot.lastProcessedInputSeq);
         if (acknowledged != null) {
-            float sample = System.currentTimeMillis() - acknowledged.timestampMs;
+            Long sentLogical = inputSendTimes.remove(acknowledged.seq);
+            float sample;
+            if (sentLogical != null) {
+                sample = logicalTimeMs - sentLogical;
+            } else {
+                sample = System.currentTimeMillis() - acknowledged.timestampMs;
+            }
             if (sample > 0f) {
                 smoothedRttMs = MathUtils.lerp(smoothedRttMs, sample, 0.2f);
             }
@@ -539,14 +569,25 @@ public class GameScreen implements Screen {
             }
         }
 
-        unconfirmedInputs.entrySet().removeIf(entry ->
-                entry.getKey() <= serverSnapshot.lastProcessedInputSeq
-        );
+        unconfirmedInputs.entrySet().removeIf(entry -> {
+            boolean applied = entry.getKey() <= serverSnapshot.lastProcessedInputSeq;
+            if (applied) {
+                inputSendTimes.remove(entry.getKey());
+            }
+            return applied;
+        });
         pruneUnconfirmedInputs();
 
         hasReceivedInitialState = true;
         if (unconfirmedInputs.isEmpty()) {
             idleAckSent = true;
+        }
+
+        float distSq = displayPosition.dst2(predictedPosition);
+        if (distSq <= (DISPLAY_SNAP_DISTANCE * DISPLAY_SNAP_DISTANCE * 4f)) {
+            displayPosition.set(predictedPosition);
+        } else {
+            displayPosition.lerp(predictedPosition, 0.35f);
         }
     }
 
@@ -603,12 +644,12 @@ public class GameScreen implements Screen {
             displayPosition.set(predictedPosition);
             return;
         }
-        if (displayPosition.dst2(predictedPosition) <= DISPLAY_SNAP_DISTANCE * DISPLAY_SNAP_DISTANCE) {
+        float distSq = displayPosition.dst2(predictedPosition);
+        if (distSq <= DISPLAY_SNAP_DISTANCE * DISPLAY_SNAP_DISTANCE) {
             displayPosition.set(predictedPosition);
             return;
         }
         float alpha = MathUtils.clamp(delta * DISPLAY_LERP_RATE, 0f, 1f);
         displayPosition.lerp(predictedPosition, alpha);
     }
-
 }
