@@ -65,6 +65,7 @@ public class GameScreen implements Screen {
     private boolean facingRight = true;
     private final Vector2 displayPosition = new Vector2();
     private static final float DISPLAY_LERP_RATE = 12f;
+    private static final float DISPLAY_SNAP_DISTANCE = 1f;
     private static final float MAX_FRAME_DELTA = 1f / 30f;
     private static final float DELTA_SMOOTH_ALPHA = 0.15f;
     private float smoothedFrameDelta = 1f / 60f;
@@ -124,19 +125,20 @@ public class GameScreen implements Screen {
             Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
             return;
         }
-        float frameDelta = getStableDelta(delta);
+
+        float renderDelta = getStableDelta(delta);
         Vector2 dir = getMovementInput();
         isLocallyMoving = dir.len2() > 0.0001f;
         boolean attacking = Gdx.input.isKeyJustPressed(Input.Keys.SPACE);
 
-        simulateLocalStep(dir, frameDelta);
-        processInputChunk(dir, attacking, frameDelta);
+        simulateLocalStep(dir, delta);
+        processInputChunk(dir, attacking, delta);
 
         Gdx.gl.glClearColor(0, 0, 0, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
         clampPositionToMap(predictedPosition);
-        updateDisplayPosition(frameDelta);
+        updateDisplayPosition(renderDelta);
         clampPositionToMap(displayPosition);
         camera.position.set(displayPosition.x, displayPosition.y, 0);
         camera.update();
@@ -145,7 +147,7 @@ public class GameScreen implements Screen {
         batch.begin();
         batch.draw(backgroundTexture, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-        playerAnimationTime += frameDelta;
+        playerAnimationTime += renderDelta;
         TextureRegion currentFrame = playerIdleAnimation != null
                 ? playerIdleAnimation.getKeyFrame(playerAnimationTime, true)
                 : playerTextureRegion;
@@ -598,6 +600,10 @@ public class GameScreen implements Screen {
             return;
         }
         if (!isLocallyMoving) {
+            displayPosition.set(predictedPosition);
+            return;
+        }
+        if (displayPosition.dst2(predictedPosition) <= DISPLAY_SNAP_DISTANCE * DISPLAY_SNAP_DISTANCE) {
             displayPosition.set(predictedPosition);
             return;
         }
