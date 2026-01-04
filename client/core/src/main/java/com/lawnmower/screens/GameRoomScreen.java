@@ -6,7 +6,11 @@ import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.Stage;
-import com.badlogic.gdx.scenes.scene2d.ui.*;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
+import com.badlogic.gdx.scenes.scene2d.ui.Label;
+import com.badlogic.gdx.scenes.scene2d.ui.Skin;
+import com.badlogic.gdx.scenes.scene2d.ui.Table;
+import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.utils.Scaling;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
@@ -18,31 +22,28 @@ import java.util.List;
 import java.util.Objects;
 
 public class GameRoomScreen implements Screen {
-    private Main game;
-    private Skin skin;
-    private Stage stage;
+    private static final float DESIGN_WIDTH = 2560f;
+    private static final float DESIGN_HEIGHT = 1440f;
+    private static final int MAX_PLAYERS = 4;
+    private static final int SLOT_WIDTH = 600;
+    private static final int SLOT_HEIGHT = 700;
 
-    private TextButton backButton;
-    private Label titleLabel;
-    private Table playerSlotTable;
+    private final Main game;
+    private final Skin skin;
+
+    private Stage stage;
     private TextButton readyButton;
     private TextButton startButton;
+    private Table playerSlotTable;
+    private ErrorPopupController errorController;
 
     private boolean isHost = false;
     private boolean amIReady = false;
     private boolean allPlayersReady = false;
-    private int currentRoomId = -1;
 
     private Texture backgroundTexture;
     private Texture lockedSlotTex;
     private Texture unlockedSlotTex;
-
-    private static final float DESIGN_WIDTH = 2560f;
-    private static final float DESIGN_HEIGHT = 1440f;
-    private static final int MAX_PLAYERS = 4;
-    private static final int WIDE = 600;
-    private static final int HEIGHT = 700;
-    private ErrorPopupController error;
 
     public GameRoomScreen(Main game, Skin skin) {
         this.game = game;
@@ -53,8 +54,7 @@ public class GameRoomScreen implements Screen {
     public void show() {
         stage = new Stage(new StretchViewport(DESIGN_WIDTH, DESIGN_HEIGHT));
         Gdx.input.setInputProcessor(stage);
-        
-        error = new ErrorPopupController(stage,skin);
+        errorController = new ErrorPopupController(stage, skin);
 
         backgroundTexture = new Texture(Gdx.files.internal("background/gameReadyRoom.png"));
         Image bg = new Image(backgroundTexture);
@@ -65,7 +65,7 @@ public class GameRoomScreen implements Screen {
         lockedSlotTex = new Texture(Gdx.files.internal("background/LockedRoom.png"));
         unlockedSlotTex = new Texture(Gdx.files.internal("background/unLockedRoom.png"));
 
-        backButton = new TextButton("离开房间", skin, "CreateButton");
+        TextButton backButton = new TextButton("离开房间", skin, "CreateButton");
         backButton.setSize(200, 60);
         backButton.setPosition(50, DESIGN_HEIGHT - 270);
         backButton.addListener(new ClickListener() {
@@ -76,10 +76,10 @@ public class GameRoomScreen implements Screen {
         });
         stage.addActor(backButton);
 
-        titleLabel = new Label("等待中...", skin);
+        Label titleLabel = new Label("等待中...", skin);
         titleLabel.setFontScale(1.3f);
         titleLabel.pack();
-        titleLabel.setPosition((DESIGN_WIDTH - titleLabel.getWidth()) / 2, DESIGN_HEIGHT - 180);
+        titleLabel.setPosition((DESIGN_WIDTH - titleLabel.getWidth()) / 2f, DESIGN_HEIGHT - 180);
         stage.addActor(titleLabel);
 
         playerSlotTable = new Table();
@@ -88,7 +88,7 @@ public class GameRoomScreen implements Screen {
 
         readyButton = new TextButton("准备", skin, "CreateButton");
         readyButton.setSize(200, 60);
-        readyButton.setPosition((DESIGN_WIDTH - readyButton.getWidth()) / 2, 120);
+        readyButton.setPosition((DESIGN_WIDTH - readyButton.getWidth()) / 2f, 120);
         readyButton.addListener(new ClickListener() {
             @Override
             public void clicked(InputEvent event, float x, float y) {
@@ -99,7 +99,7 @@ public class GameRoomScreen implements Screen {
 
         startButton = new TextButton("开始游戏", skin, "CreateButton");
         startButton.setSize(200, 60);
-        startButton.setPosition((DESIGN_WIDTH - startButton.getWidth()) / 2, 200);
+        startButton.setPosition((DESIGN_WIDTH - startButton.getWidth()) / 2f, 200);
         startButton.setVisible(false);
         startButton.addListener(new ClickListener() {
             @Override
@@ -111,8 +111,6 @@ public class GameRoomScreen implements Screen {
     }
 
     public void onRoomUpdate(int roomId, List<Message.PlayerInfo> players) {
-        this.currentRoomId = roomId;
-
         final List<Message.PlayerInfo> safePlayers = Objects.requireNonNullElse(players, List.of());
 
         Gdx.app.postRunnable(() -> {
@@ -133,7 +131,7 @@ public class GameRoomScreen implements Screen {
             for (int i = 0; i < MAX_PLAYERS; i++) {
                 Texture tex = occupied[i] ? unlockedSlotTex : lockedSlotTex;
                 Image slot = new Image(tex);
-                slot.setSize(WIDE, HEIGHT);
+                slot.setSize(SLOT_WIDTH, SLOT_HEIGHT);
 
                 if (occupied[i]) {
                     Label nameLabel = new Label(names[i], skin, "default");
@@ -141,9 +139,9 @@ public class GameRoomScreen implements Screen {
                     Table slotWithLabel = new Table();
                     slotWithLabel.add(slot).row();
                     slotWithLabel.add(nameLabel).padTop(10);
-                    playerSlotTable.add(slotWithLabel).size(WIDE, HEIGHT);
+                    playerSlotTable.add(slotWithLabel).size(SLOT_WIDTH, SLOT_HEIGHT);
                 } else {
-                    playerSlotTable.add(slot).size(WIDE - 70, HEIGHT - 10);
+                    playerSlotTable.add(slot).size(SLOT_WIDTH - 70, SLOT_HEIGHT - 10);
                 }
             }
 
@@ -173,8 +171,7 @@ public class GameRoomScreen implements Screen {
     private void updatePlayerSlotPosition() {
         playerSlotTable.validate();
         playerSlotTable.pack();
-
-        float x = (DESIGN_WIDTH - playerSlotTable.getWidth()) / 2;
+        float x = (DESIGN_WIDTH - playerSlotTable.getWidth()) / 2f;
         float y = DESIGN_HEIGHT * 0.2f;
         playerSlotTable.setPosition(x, y);
     }
@@ -183,27 +180,36 @@ public class GameRoomScreen implements Screen {
         try {
             game.getTcpClient().sendSetReady(!amIReady);
         } catch (Exception e) {
-            error.showError("准备操作失败");
+            if (errorController != null) {
+                errorController.showError("准备操作失败");
+            }
         }
     }
 
     private void startGame() {
-        if (!isHost) return;
+        if (!isHost) {
+            return;
+        }
         if (!allPlayersReady) {
-            error.showError("还有玩家未准备完毕，无法开始");
+            if (errorController != null) {
+                errorController.showError("还有玩家未准备完毕，无法开始");
+            }
             return;
         }
         try {
             game.getTcpClient().sendStartGame();
         } catch (Exception e) {
-            error.showError("无法开始游戏");
+            if (errorController != null) {
+                errorController.showError("无法开始游戏");
+            }
         }
     }
 
     private void leaveRoom() {
         try {
             game.getTcpClient().sendLeaveRoom();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         game.setScreen(new RoomListScreen(game, skin));
     }
 
@@ -211,6 +217,9 @@ public class GameRoomScreen implements Screen {
     public void render(float delta) {
         Gdx.gl.glClearColor(0.1f, 0.15f, 0.1f, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+        if (errorController != null) {
+            errorController.update(delta);
+        }
         stage.act(delta);
         stage.draw();
     }
@@ -221,19 +230,35 @@ public class GameRoomScreen implements Screen {
     }
 
     @Override
-    public void pause() {}
+    public void pause() { }
 
     @Override
-    public void resume() {}
+    public void resume() { }
 
     @Override
-    public void hide() {}
+    public void hide() {
+        if (errorController != null) {
+            errorController.hide();
+        }
+    }
 
     @Override
     public void dispose() {
-        if (backgroundTexture != null) backgroundTexture.dispose();
-        if (lockedSlotTex != null) lockedSlotTex.dispose();
-        if (unlockedSlotTex != null) unlockedSlotTex.dispose();
-        if (stage != null) stage.dispose();
+        if (errorController != null) {
+            errorController.dispose();
+            errorController = null;
+        }
+        if (backgroundTexture != null) {
+            backgroundTexture.dispose();
+        }
+        if (lockedSlotTex != null) {
+            lockedSlotTex.dispose();
+        }
+        if (unlockedSlotTex != null) {
+            unlockedSlotTex.dispose();
+        }
+        if (stage != null) {
+            stage.dispose();
+        }
     }
 }

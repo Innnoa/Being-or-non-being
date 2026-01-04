@@ -61,6 +61,8 @@ public class GameScreen implements Screen {
     private int inputSequence = 0;
     private boolean hasReceivedInitialState = false;
     private boolean facingRight = true;
+    private final Vector2 displayPosition = new Vector2();
+    private static final float DISPLAY_LERP_RATE = 12f;
 
     private boolean hasPendingInputChunk = false;
     private final Vector2 pendingMoveDir = new Vector2();
@@ -106,6 +108,7 @@ public class GameScreen implements Screen {
         }
 
         predictedPosition.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
+        displayPosition.set(predictedPosition);
     }
 
     @Override
@@ -126,7 +129,9 @@ public class GameScreen implements Screen {
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
         clampPositionToMap(predictedPosition);
-        camera.position.set(predictedPosition.x, predictedPosition.y, 0);
+        updateDisplayPosition(delta);
+        clampPositionToMap(displayPosition);
+        camera.position.set(displayPosition.x, displayPosition.y, 0);
         camera.update();
 
         batch.setProjectionMatrix(camera.combined);
@@ -146,7 +151,7 @@ public class GameScreen implements Screen {
         long estimatedServerTimeMs = estimateServerTimeMs();
         long renderServerTimeMs = estimatedServerTimeMs - computeRenderDelayMs();
         renderRemotePlayers(renderServerTimeMs, currentFrame);
-        drawCharacterFrame(currentFrame, predictedPosition.x, predictedPosition.y, facingRight);
+        drawCharacterFrame(currentFrame, displayPosition.x, displayPosition.y, facingRight);
 
         batch.end();
     }
@@ -495,10 +500,14 @@ public class GameScreen implements Screen {
             }
         }
 
+        boolean wasInitialized = hasReceivedInitialState;
         predictedPosition.set(serverSnapshot.position);
         predictedRotation = serverSnapshot.rotation;
         facingRight = inferFacingFromRotation(predictedRotation);
         clampPositionToMap(predictedPosition);
+        if (!wasInitialized) {
+            displayPosition.set(predictedPosition);
+        }
 
         for (PlayerInputCommand input : unconfirmedInputs.values()) {
             if (input.seq > serverSnapshot.lastProcessedInputSeq) {
@@ -560,6 +569,14 @@ public class GameScreen implements Screen {
         if (playerTexture != null) playerTexture.dispose();
         if (playerAtlas != null) playerAtlas.dispose();
         if (backgroundTexture != null) backgroundTexture.dispose();
+    }
+
+    private void updateDisplayPosition(float delta) {
+        if (!hasReceivedInitialState) {
+            return;
+        }
+        float alpha = MathUtils.clamp(delta * DISPLAY_LERP_RATE, 0f, 1f);
+        displayPosition.lerp(predictedPosition, alpha);
     }
 
 }
