@@ -65,6 +65,9 @@ public class GameScreen implements Screen {
     private boolean facingRight = true;
     private final Vector2 displayPosition = new Vector2();
     private static final float DISPLAY_LERP_RATE = 12f;
+    private static final float MAX_FRAME_DELTA = 1f / 30f;
+    private static final float DELTA_SMOOTH_ALPHA = 0.15f;
+    private float smoothedFrameDelta = 1f / 60f;
     private boolean isLocallyMoving = false;
 
     private boolean hasPendingInputChunk = false;
@@ -121,19 +124,19 @@ public class GameScreen implements Screen {
             Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
             return;
         }
-
+        float frameDelta = getStableDelta(delta);
         Vector2 dir = getMovementInput();
         isLocallyMoving = dir.len2() > 0.0001f;
         boolean attacking = Gdx.input.isKeyJustPressed(Input.Keys.SPACE);
 
-        simulateLocalStep(dir, delta);
-        processInputChunk(dir, attacking, delta);
+        simulateLocalStep(dir, frameDelta);
+        processInputChunk(dir, attacking, frameDelta);
 
         Gdx.gl.glClearColor(0, 0, 0, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
         clampPositionToMap(predictedPosition);
-        updateDisplayPosition(delta);
+        updateDisplayPosition(frameDelta);
         clampPositionToMap(displayPosition);
         camera.position.set(displayPosition.x, displayPosition.y, 0);
         camera.update();
@@ -142,7 +145,7 @@ public class GameScreen implements Screen {
         batch.begin();
         batch.draw(backgroundTexture, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-        playerAnimationTime += delta;
+        playerAnimationTime += frameDelta;
         TextureRegion currentFrame = playerIdleAnimation != null
                 ? playerIdleAnimation.getKeyFrame(playerAnimationTime, true)
                 : playerTextureRegion;
@@ -158,6 +161,12 @@ public class GameScreen implements Screen {
         drawCharacterFrame(currentFrame, displayPosition.x, displayPosition.y, facingRight);
 
         batch.end();
+    }
+
+    private float getStableDelta(float rawDelta) {
+        float clamped = Math.min(rawDelta, MAX_FRAME_DELTA);
+        smoothedFrameDelta += (clamped - smoothedFrameDelta) * DELTA_SMOOTH_ALPHA;
+        return smoothedFrameDelta;
     }
 
     private void simulateLocalStep(Vector2 dir, float delta) {
