@@ -149,7 +149,16 @@ void GameManager::StopGameLoop(uint32_t room_id) {
   }
 }
 
-// 放置玩家？
+// 将坐标限制在地图边界内
+lawnmower::Vector2 GameManager::ClampToMap(const SceneConfig& cfg, float x,
+                                           float y) const {
+  lawnmower::Vector2 pos;
+  pos.set_x(std::clamp(x, 0.0f, static_cast<float>(cfg.width)));
+  pos.set_y(std::clamp(y, 0.0f, static_cast<float>(cfg.height)));
+  return pos;
+}
+
+// 放置玩家
 void GameManager::PlacePlayers(const RoomManager::RoomSnapshot& snapshot,
                                Scene* scene) {
   if (scene == nullptr) {
@@ -176,12 +185,13 @@ void GameManager::PlacePlayers(const RoomManager::RoomSnapshot& snapshot,
     // 计算实际x/y的位置
     const float x = center_x + std::cos(angle) * kSpawnRadius;
     const float y = center_y + std::sin(angle) * kSpawnRadius;
+    const auto clamped_pos = ClampToMap(scene->config, x, y);
 
     // 设置基本信息
     PlayerRuntime runtime;
     runtime.state.set_player_id(player.player_id);
-    runtime.state.mutable_position()->set_x(x);
-    runtime.state.mutable_position()->set_y(y);
+    runtime.state.mutable_position()->set_x(clamped_pos.x());
+    runtime.state.mutable_position()->set_y(clamped_pos.y());
     runtime.state.set_rotation(angle * 180.0f / std::numbers::pi_v<float>);
     runtime.state.set_health(kDefaultMaxHealth);
     runtime.state.set_max_health(kDefaultMaxHealth);
@@ -268,6 +278,8 @@ void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
                                    double ticks_per_sync,
                                    uint32_t full_sync_interval_ticks) {
   lawnmower::S2C_GameStateSync sync;
+  bool force_full_sync = false;
+  bool should_sync = false;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -301,12 +313,11 @@ void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
                                   : scene.config.move_speed;
 
           auto* position = runtime.state.mutable_position();
-          const float new_x =
-              std::clamp(position->x() + dx * speed * dt, 0.0f,
-                         static_cast<float>(scene.config.width));
-          const float new_y =
-              std::clamp(position->y() + dy * speed * dt, 0.0f,
-                         static_cast<float>(scene.config.height));
+          const auto new_pos =
+              ClampToMap(scene.config, position->x() + dx * speed * dt,
+                         position->y() + dy * speed * dt);
+          const float new_x = new_pos.x();
+          const float new_y = new_pos.y();
 
           if (std::abs(new_x - position->x()) > 1e-4f ||
               std::abs(new_y - position->y()) > 1e-4f) {
@@ -333,27 +344,42 @@ void GameManager::ProcessSceneTick(uint32_t room_id, float dt,
     scene.sync_accumulator += 1.0;
     scene.ticks_since_full_sync += 1;
 
-    const bool should_sync = scene.sync_accumulator >= ticks_per_sync;
+    should_sync = scene.sync_accumulator >= ticks_per_sync;
     if (should_sync) {
       scene.sync_accumulator -= ticks_per_sync;
     }
-    const bool force_full_sync =
+    force_full_sync =
         full_sync_interval_ticks > 0 &&
         scene.ticks_since_full_sync >= full_sync_interval_ticks;
-    const bool should_broadcast =
-        should_sync || force_full_sync || has_dirty;
-    if (!should_broadcast) {
+
+    if (!should_sync && !force_full_sync) {
+      return;
+    }
+
+    if (!force_full_sync && !has_dirty) {
       return;
     }
 
     FillSyncTiming(room_id, scene.tick, &sync);
 
-    for (auto& [_, runtime] : scene.players) {
-      runtime.state.set_last_processed_input_seq(runtime.last_input_seq);
-      *sync.add_players() = runtime.state;
-      runtime.dirty = false;
+    if (force_full_sync) {
+      for (auto& [_, runtime] : scene.players) {
+        runtime.state.set_last_processed_input_seq(runtime.last_input_seq);
+        *sync.add_players() = runtime.state;
+        runtime.dirty = false;
+      }
+      scene.ticks_since_full_sync = 0;
+    } else {
+      for (auto& [_, runtime] : scene.players) {
+        if (!runtime.dirty) {
+          continue;
+        }
+        runtime.state.set_last_processed_input_seq(runtime.last_input_seq);
+        *sync.add_players() = runtime.state;
+        runtime.dirty = false;
+      }
+      // 维持 ticks_since_full_sync 累加，确保周期性全量同步能够触发
     }
-    scene.ticks_since_full_sync = 0;
   }
 
   if (sync.players_size() == 0) {
@@ -419,6 +445,22 @@ bool GameManager::HandlePlayerInput(uint32_t player_id,
   return true;
 }
 
+bool GameManager::IsInsideMap(uint32_t room_id,
+                              const lawnmower::Vector2& position) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto scene_it = scenes_.find(room_id);
+  if (scene_it == scenes_.end()) {
+    return false;
+  }
+
+  const SceneConfig& cfg = scene_it->second.config;
+  const float x = position.x();
+  const float y = position.y();
+
+  return x >= 0.0f && x <= static_cast<float>(cfg.width) && y >= 0.0f &&
+         y <= static_cast<float>(cfg.height);
+}
+
 // 移除玩家
 void GameManager::RemovePlayer(uint32_t player_id) {
   bool scene_removed = false;
@@ -455,7 +497,17 @@ void GameManager::RemovePlayer(uint32_t player_id) {
 }
 GameManager::SceneConfig GameManager::LoadConfigFromFile() const {
   SceneConfig cfg;
-  std::ifstream file("server/config/server_config.json");
+  const char* kConfigPaths[] = {"config/server_config.json",
+                                "../config/server_config.json",
+                                "server/config/server_config.json"};
+
+  std::ifstream file;
+  for (const char* path : kConfigPaths) {
+    file = std::ifstream(path);
+    if (file.is_open()) {
+      break;
+    }
+  }
   if (!file.is_open()) {
     return cfg;
   }

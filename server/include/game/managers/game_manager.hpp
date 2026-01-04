@@ -38,6 +38,10 @@ class GameManager {
                          const lawnmower::C2S_PlayerInput& input,
                          uint32_t* room_id);
 
+  // 判断给定坐标是否在指定房间的地图边界内（基于场景宽高）
+  bool IsInsideMap(uint32_t room_id,
+                   const lawnmower::Vector2& position) const;
+
   // 玩家断线/离开时清理场景信息
   void RemovePlayer(uint32_t player_id);
 
@@ -79,6 +83,8 @@ class GameManager {
                         float dt, double ticks_per_sync,
                         uint32_t full_sync_interval_ticks);
   void StopGameLoop(uint32_t room_id);
+  lawnmower::Vector2 ClampToMap(const SceneConfig& cfg, float x,
+                                float y) const;
 
   mutable std::mutex mutex_;
   std::unordered_map<uint32_t, Scene> scenes_;           // room_id -> scene
