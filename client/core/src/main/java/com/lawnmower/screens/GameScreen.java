@@ -36,8 +36,8 @@ public class GameScreen implements Screen {
     // 输入分段更细（20~33ms），降低服务端堆积
     private static final float MAX_COMMAND_DURATION = 0.025f;
     private static final float MIN_COMMAND_DURATION = 1f / 120f;
-    private static final long SNAPSHOT_RETENTION_MS = 400L;
-    private static final long MAX_EXTRAPOLATION_MS = 150L;
+    private static final long SNAPSHOT_RETENTION_MS = 900L;
+    private static final long MAX_EXTRAPOLATION_MS = 220L;
     private static final long INTERP_DELAY_MIN_MS = 80L;
     private static final long INTERP_DELAY_MAX_MS = 220L;
     private static final int MAX_UNCONFIRMED_INPUTS = 240;
