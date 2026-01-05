@@ -6,8 +6,7 @@
 #include "network/tcp/tcp_session.hpp"
 
 TcpServer::TcpServer(asio::io_context& io, uint16_t port)
-    : io_context_(io),
-      acceptor_(io_context_, tcp::endpoint(tcp::v4(), port)) {}
+    : io_context_(io), acceptor_(io_context_, tcp::endpoint(tcp::v4(), port)) {}
 
 void TcpServer::start() {  // public入口函数
   do_accept();

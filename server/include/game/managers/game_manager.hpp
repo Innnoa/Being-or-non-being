@@ -86,8 +86,7 @@ class GameManager {
                         const std::shared_ptr<asio::steady_timer>& timer,
                         double tick_interval_seconds);
   void StopGameLoop(uint32_t room_id);
-  lawnmower::Vector2 ClampToMap(const SceneConfig& cfg, float x,
-                                float y) const;
+  lawnmower::Vector2 ClampToMap(const SceneConfig& cfg, float x, float y) const;
 
   mutable std::mutex mutex_;
   std::unordered_map<uint32_t, Scene> scenes_;           // room_id -> scene
