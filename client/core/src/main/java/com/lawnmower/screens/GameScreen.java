@@ -30,9 +30,11 @@ public class GameScreen implements Screen {
 
     private static final float WORLD_WIDTH = 1280f;
     private static final float WORLD_HEIGHT = 720f;
+    // 与服务器 GameManager::SceneConfig.move_speed (200f) 对齐，避免预测/权威速度不一致
     private static final float PLAYER_SPEED = 200f;
 
-    private static final float MAX_COMMAND_DURATION = 0.05f;
+    // 输入分段更细（20~33ms），降低服务端堆积
+    private static final float MAX_COMMAND_DURATION = 0.025f;
     private static final float MIN_COMMAND_DURATION = 1f / 120f;
     private static final long SNAPSHOT_RETENTION_MS = 400L;
     private static final long MAX_EXTRAPOLATION_MS = 150L;
@@ -86,6 +88,7 @@ public class GameScreen implements Screen {
     private final Vector2 pendingMoveDir = new Vector2();
     private boolean pendingAttack = false;
     private float pendingInputDuration = 0f;
+    private long pendingInputStartMs = 0L;
     private boolean idleAckSent = true;
 
     private float clockOffsetMs = 0f;
@@ -259,6 +262,7 @@ public class GameScreen implements Screen {
         pendingMoveDir.set(dir);
         pendingAttack = attacking;
         pendingInputDuration = Math.max(delta, MIN_COMMAND_DURATION);
+        pendingInputStartMs = logicalTimeMs;
         hasPendingInputChunk = true;
     }
 
@@ -266,14 +270,13 @@ public class GameScreen implements Screen {
         if (!hasPendingInputChunk) {
             return;
         }
-        float duration = Math.max(pendingInputDuration, MIN_COMMAND_DURATION);
+        float duration = resolvePendingDurationSeconds();
         PlayerInputCommand cmd = new PlayerInputCommand(inputSequence++, pendingMoveDir, pendingAttack, duration);
         unconfirmedInputs.put(cmd.seq, cmd);
         inputSendTimes.put(cmd.seq, logicalTimeMs);
         pruneUnconfirmedInputs();
         sendPlayerInputToServer(cmd);
-        hasPendingInputChunk = false;
-        pendingInputDuration = 0f;
+        resetPendingInputAccumulator();
     }
 
     private void sendIdleCommand(float delta) {
@@ -394,14 +397,15 @@ public class GameScreen implements Screen {
                 INTERP_DELAY_MIN_MS, INTERP_DELAY_MAX_MS);
         return Math.round(renderDelayMs);
     }
+
     private void logSyncIntervalSpike(float intervalMs, float smoothInterval) {
         if (intervalMs < SYNC_INTERVAL_LOG_THRESHOLD_MS) {
             return;
-            }
+        }
         long nowMs = TimeUtils.millis();
         if (nowMs - lastSyncLogMs < SYNC_INTERVAL_LOG_INTERVAL_MS) {
             return;
-            }
+        }
         Gdx.app.log(TAG, "Sync interval spike=" + intervalMs + "ms smooth=" + smoothInterval
                 + "ms renderDelay=" + renderDelayMs);
         lastSyncLogMs = nowMs;
@@ -741,5 +745,23 @@ public class GameScreen implements Screen {
         Gdx.app.log(TAG, "Display drift=" + drift + " facingRight=" + facingRight
                 + " pendingInputs=" + unconfirmedInputs.size());
         lastDisplayDriftLogMs = nowMs;
+    }
+
+    private float resolvePendingDurationSeconds() {
+        float elapsed = pendingInputDuration;
+        if (pendingInputStartMs > 0L) {
+            long elapsedMs = logicalTimeMs - pendingInputStartMs;
+            if (elapsedMs > 0L) {
+                elapsed = elapsedMs / 1000f;
+            }
+        }
+        return Math.max(elapsed, MIN_COMMAND_DURATION);
+    }
+
+    private void resetPendingInputAccumulator() {
+        hasPendingInputChunk = false;
+        pendingAttack = false;
+        pendingInputDuration = 0f;
+        pendingInputStartMs = 0L;
     }
 }
