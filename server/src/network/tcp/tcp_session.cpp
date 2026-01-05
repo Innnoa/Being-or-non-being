@@ -76,31 +76,31 @@ void TcpSession::handle_disconnect() {
 
 void TcpSession::read_header() {
   auto self = shared_from_this();
-  asio::async_read(
-      socket_, asio::buffer(length_buffer_),
-      [this, self](const asio::error_code& ec, std::size_t) {
-        spdlog::debug("开始读取包长度");
-        if (ec) {
-          spdlog::warn("读取包长度失败: {}", ec.message());
-          handle_disconnect();
-          return;
-        }
+  asio::async_read(socket_, asio::buffer(length_buffer_),
+                   [this, self](const asio::error_code& ec, std::size_t) {
+                     spdlog::debug("开始读取包长度");
+                     if (ec) {
+                       spdlog::warn("读取包长度失败: {}", ec.message());
+                       handle_disconnect();
+                       return;
+                     }
 
-        uint32_t net_len = 0;
-        std::memcpy(&net_len, length_buffer_.data(), sizeof(net_len));
-        const uint32_t body_len = ntohl(net_len);
-        spdlog::debug("收到包长度: {}", body_len);
-        if (body_len == 0 || body_len > kMaxPacketSize) {
-          spdlog::warn("包长度异常: {}", body_len);
-          handle_disconnect();
-          return;
-        }
+                     uint32_t net_len = 0;
+                     std::memcpy(&net_len, length_buffer_.data(),
+                                 sizeof(net_len));
+                     const uint32_t body_len = ntohl(net_len);
+                     spdlog::debug("收到包长度: {}", body_len);
+                     if (body_len == 0 || body_len > kMaxPacketSize) {
+                       spdlog::warn("包长度异常: {}", body_len);
+                       handle_disconnect();
+                       return;
+                     }
 
-        read_buffer_.resize(body_len);
-        spdlog::debug("包长度解析完成，开始读取包体");
+                     read_buffer_.resize(body_len);
+                     spdlog::debug("包长度解析完成，开始读取包体");
 
-        read_body(body_len);
-      });
+                     read_body(body_len);
+                   });
 }
 
 void TcpSession::read_body(std::size_t length) {
@@ -360,7 +360,8 @@ void TcpSession::send_packet(const lawnmower::Packet& packet) {
     const auto payload_len = packet.payload().size();
     const auto body_len = data.size();
     spdlog::debug(
-        "发送包 {}，payload长度 {} bytes，序列化后长度 {} bytes（含4字节包长总计 {} "
+        "发送包 {}，payload长度 {} bytes，序列化后长度 {} "
+        "bytes（含4字节包长总计 {} "
         "bytes）",
         MessageTypeToString(packet.msg_type()), payload_len, body_len,
         body_len + sizeof(net_len));

@@ -8,8 +8,8 @@
 #include <numbers>
 #include <regex>
 #include <span>
-#include <string_view>
 #include <spdlog/spdlog.h>
+#include <string_view>
 
 #include "network/tcp/tcp_session.hpp"
 
@@ -56,8 +56,7 @@ void SendSyncToSessions(std::span<const std::weak_ptr<TcpSession>> sessions,
                         const lawnmower::S2C_GameStateSync& sync) {
   for (const auto& weak_session : sessions) {
     if (auto session = weak_session.lock()) {
-      session->SendProto(lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC,
-                         sync);
+      session->SendProto(lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
     }
   }
 }
@@ -85,8 +84,8 @@ void GameManager::ScheduleGameTick(
   }
 
   timer->expires_after(interval);
-  timer->async_wait([this, room_id, interval, timer, tick_interval_seconds](
-                        const asio::error_code& ec) {
+  timer->async_wait([this, room_id, interval, timer,
+                     tick_interval_seconds](const asio::error_code& ec) {
     if (ec == asio::error::operation_aborted) {
       return;
     }
@@ -119,12 +118,13 @@ void GameManager::StartGameLoop(uint32_t room_id) {
     tick_rate = std::max<uint32_t>(1, scene.config.tick_rate);
     state_sync_rate = std::max<uint32_t>(1, scene.config.state_sync_rate);
     tick_interval_seconds = 1.0 / static_cast<double>(tick_rate);
-    const auto tick_interval = std::chrono::duration<double>(tick_interval_seconds);
+    const auto tick_interval =
+        std::chrono::duration<double>(tick_interval_seconds);
     scene.tick_interval = tick_interval;
-    scene.sync_interval =
-        std::chrono::duration<double>(1.0 / static_cast<double>(state_sync_rate));
-    scene.full_sync_interval =
-        std::chrono::duration<double>(tick_interval_seconds * kFullSyncIntervalTicks);
+    scene.sync_interval = std::chrono::duration<double>(
+        1.0 / static_cast<double>(state_sync_rate));
+    scene.full_sync_interval = std::chrono::duration<double>(
+        tick_interval_seconds * kFullSyncIntervalTicks);
 
     if (scene.loop_timer) {
       scene.loop_timer->cancel();
@@ -336,10 +336,9 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
         const float len_sq = dx_raw * dx_raw + dy_raw * dy_raw;
         if (len_sq >= kDirectionEpsilonSq && len_sq <= kMaxDirectionLengthSq) {
           const double reported_dt =
-              input.delta_ms() > 0
-                  ? std::clamp(input.delta_ms() / 1000.0, 0.0,
-                               kMaxInputDeltaSeconds)
-                  : time_budget;
+              input.delta_ms() > 0 ? std::clamp(input.delta_ms() / 1000.0, 0.0,
+                                                kMaxInputDeltaSeconds)
+                                   : time_budget;
           const double input_dt = std::min(time_budget, reported_dt);
 
           const float len = std::sqrt(len_sq);
@@ -352,7 +351,8 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
 
           auto* position = runtime.state.mutable_position();
           const auto new_pos = ClampToMap(
-              scene.config, position->x() + dx * speed * static_cast<float>(input_dt),
+              scene.config,
+              position->x() + dx * speed * static_cast<float>(input_dt),
               position->y() + dy * speed * static_cast<float>(input_dt));
           const float new_x = new_pos.x();
           const float new_y = new_pos.y();
@@ -383,9 +383,9 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
     scene.sync_accumulator += dt_seconds;
     scene.full_sync_elapsed += dt_seconds;
 
-    const double sync_interval =
-        scene.sync_interval.count() > 0.0 ? scene.sync_interval.count()
-                                          : tick_interval_seconds;
+    const double sync_interval = scene.sync_interval.count() > 0.0
+                                     ? scene.sync_interval.count()
+                                     : tick_interval_seconds;
 
     while (scene.sync_accumulator >= sync_interval) {
       scene.sync_accumulator -= sync_interval;
@@ -395,11 +395,11 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
     const double full_sync_interval_seconds =
         scene.full_sync_interval.count() > 0.0
             ? scene.full_sync_interval.count()
-            : tick_interval_seconds * static_cast<double>(kFullSyncIntervalTicks);
+            : tick_interval_seconds *
+                  static_cast<double>(kFullSyncIntervalTicks);
 
-    force_full_sync =
-        full_sync_interval_seconds > 0.0 &&
-        scene.full_sync_elapsed >= full_sync_interval_seconds;
+    force_full_sync = full_sync_interval_seconds > 0.0 &&
+                      scene.full_sync_elapsed >= full_sync_interval_seconds;
 
     if (!should_sync && !force_full_sync) {
       return;
