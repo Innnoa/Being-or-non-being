@@ -5,6 +5,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.scenes.scene2d.ui.Skin;
 
 import com.lawnmower.network.TcpClient;
+import com.lawnmower.network.UdpClient;
 import com.lawnmower.screens.GameRoomScreen;
 import com.lawnmower.screens.GameScreen;
 import com.lawnmower.screens.MainMenuScreen;
@@ -23,9 +24,14 @@ public class Main extends Game {
     private static final Logger log = LoggerFactory.getLogger(Main.class);
     private Skin skin;
     private TcpClient tcpClient;
+    private UdpClient udpClient;
     private String playerName = "Player";
     private int playerId = -1; // 未登录时为 -1
     private long lastSocketWaitLogMs = 0L;
+    private int currentRoomId = -1;
+    private String sessionToken = "";
+    private long lastUdpSyncTick = -1L;
+    private long lastUdpServerTimeMs = -1L;
 
     private final AtomicBoolean networkRunning = new AtomicBoolean(false);
     private Thread networkThread;
@@ -134,6 +140,7 @@ public class Main extends Game {
 
             // 线程退出
             networkRunning.set(false);
+            stopUdpClient();
             Gdx.app.postRunnable(() -> {
                 // 可选：提示连接断开，返回主菜单等
                 if (!(getScreen() instanceof MainMenuScreen)) {
@@ -147,6 +154,138 @@ public class Main extends Game {
     }
 
     // ———————— 公共访问方法 ————————
+
+    private void processUdpPacket(Message.Packet packet) {
+        if (packet == null) {
+            return;
+        }
+        Message.MessageType type = packet.getMsgType();
+        try {
+            Object payload = parsePacketPayload(packet, type);
+            if (payload == null) {
+                return;
+            }
+            if (type == Message.MessageType.MSG_S2C_GAME_STATE_SYNC) {
+                Message.S2C_GameStateSync sync = (Message.S2C_GameStateSync) payload;
+                if (shouldDropUdpSync(sync)) {
+                    return;
+                }
+            }
+            handleNetworkMessage(type, payload);
+        } catch (IOException e) {
+            Gdx.app.log("UDP", "Failed to parse UDP packet: " + e.getMessage());
+        }
+    }
+
+    private Object parsePacketPayload(Message.Packet packet, Message.MessageType type) throws IOException {
+        switch (type) {
+            case MSG_S2C_LOGIN_RESULT:
+                return Message.S2C_LoginResult.parseFrom(packet.getPayload());
+            case MSG_S2C_ROOM_LIST:
+                return Message.S2C_RoomList.parseFrom(packet.getPayload());
+            case MSG_S2C_ROOM_UPDATE:
+                return Message.S2C_RoomUpdate.parseFrom(packet.getPayload());
+            case MSG_S2C_GAME_START:
+                return Message.S2C_GameStart.parseFrom(packet.getPayload());
+            case MSG_S2C_GAME_STATE_SYNC:
+                return Message.S2C_GameStateSync.parseFrom(packet.getPayload());
+            case MSG_S2C_PLAYER_HURT:
+                return Message.S2C_PlayerHurt.parseFrom(packet.getPayload());
+            case MSG_S2C_ENEMY_DIED:
+                return Message.S2C_EnemyDied.parseFrom(packet.getPayload());
+            case MSG_S2C_PLAYER_LEVEL_UP:
+                return Message.S2C_PlayerLevelUp.parseFrom(packet.getPayload());
+            case MSG_S2C_DROPPED_ITEM:
+                return Message.S2C_DroppedItem.parseFrom(packet.getPayload());
+            case MSG_S2C_GAME_OVER:
+                return Message.S2C_GameOver.parseFrom(packet.getPayload());
+            default:
+                Gdx.app.log("NET", "Unknown message type: " + type);
+                return null;
+        }
+    }
+
+    private boolean shouldDropUdpSync(Message.S2C_GameStateSync sync) {
+        long tick = sync.hasSyncTime()
+                ? Integer.toUnsignedLong(sync.getSyncTime().getTick())
+                : -1L;
+        if (tick >= 0) {
+            if (tick <= lastUdpSyncTick) {
+                return true;
+            }
+            lastUdpSyncTick = tick;
+            lastUdpServerTimeMs = sync.getServerTimeMs();
+            return false;
+        }
+
+        long serverTime = sync.getServerTimeMs();
+        if (serverTime <= lastUdpServerTimeMs) {
+            return true;
+        }
+        lastUdpServerTimeMs = serverTime;
+        return false;
+    }
+
+    private synchronized void ensureUdpSession(int roomId) {
+        if (playerId <= 0) {
+            return;
+        }
+        int targetRoom = roomId > 0 ? roomId : currentRoomId;
+        if (targetRoom <= 0) {
+            return;
+        }
+        try {
+            startUdpClientIfNeeded();
+            lastUdpSyncTick = -1L;
+            lastUdpServerTimeMs = -1L;
+            String token = (sessionToken != null && !sessionToken.isEmpty()) ? sessionToken : playerName;
+            udpClient.configureSession(playerId, targetRoom, token);
+        } catch (IOException e) {
+            log.error("Failed to initialize UDP session", e);
+        }
+    }
+
+    private synchronized void startUdpClientIfNeeded() throws IOException {
+        if (udpClient == null) {
+            udpClient = new UdpClient();
+            udpClient.setErrorConsumer(err -> {
+                if (err != null) {
+                    Gdx.app.log("UDP", "UDP error: " + err.getMessage());
+                }
+            });
+        }
+        if (!udpClient.isRunning()) {
+            udpClient.start(Config.SERVER_HOST, Config.SERVER_UDP_PORT, this::processUdpPacket);
+        }
+    }
+
+    private synchronized void stopUdpClient() {
+        if (udpClient == null) {
+            return;
+        }
+        udpClient.stop();
+        udpClient = null;
+    }
+
+    public boolean trySendPlayerInput(Message.C2S_PlayerInput input) {
+        if (input == null) {
+            return false;
+        }
+        if (udpClient != null && udpClient.isRunning()) {
+            if (udpClient.sendPlayerInput(input)) {
+                return true;
+            }
+        }
+        if (tcpClient != null) {
+            try {
+                tcpClient.sendPlayerInput(input);
+                return true;
+            } catch (IOException e) {
+                log.warn("Failed to send input via TCP fallback", e);
+            }
+        }
+        return false;
+    }
 
     public Skin getSkin() {
         return skin;
@@ -182,6 +321,7 @@ public class Main extends Game {
                     if (result.getSuccess()) {
                         setPlayerId(result.getPlayerId());
                         setPlayerName(result.getMessageLogin());
+                        sessionToken = result.getMessageLogin();
                         // 登录成功，跳转到房间列表
                         setScreen(new RoomListScreen(Main.this, skin));
                     } else {
@@ -204,6 +344,7 @@ public class Main extends Game {
 
                 case MSG_S2C_ROOM_UPDATE:
                     Message.S2C_RoomUpdate update = (Message.S2C_RoomUpdate) message;
+                    currentRoomId = update.getRoomId();
                     if (!(getScreen() instanceof GameRoomScreen)) {
                         // 自动进入游戏房间界面
                         setScreen(new GameRoomScreen(Main.this, skin));
@@ -213,6 +354,9 @@ public class Main extends Game {
                     }
                     break;
                 case MSG_S2C_GAME_START:
+                    Message.S2C_GameStart start = (Message.S2C_GameStart) message;
+                    currentRoomId = start.getRoomId();
+                    ensureUdpSession(currentRoomId);
                     if (getScreen() instanceof GameRoomScreen) {
                         // 切换到游戏场景
                         setScreen(new GameScreen(Main.this));
@@ -255,6 +399,8 @@ public class Main extends Game {
                 log.warn("Error closing TCP client", e);
             }
         }
+
+        stopUdpClient();
 
         if (networkThread != null) {
             networkThread.interrupt();

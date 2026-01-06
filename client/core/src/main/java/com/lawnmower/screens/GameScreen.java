@@ -43,6 +43,7 @@ public class GameScreen implements Screen {
     private static final int MAX_UNCONFIRMED_INPUTS = 240;
     private static final long MAX_UNCONFIRMED_INPUT_AGE_MS = 1500L;
     private static final long REMOTE_PLAYER_TIMEOUT_MS = 5000L;
+    private static final long MIN_INPUT_SEND_INTERVAL_MS = 10L; // ~100Hz
 
     private final Vector2 renderBuffer = new Vector2();
     private final Map<Integer, Message.PlayerState> serverPlayerStates = new HashMap<>();
@@ -111,6 +112,8 @@ public class GameScreen implements Screen {
     private long lastSyncArrivalMs = 0L;
     private long lastSyncLogMs = 0L;
     private float smoothedSyncIntervalMs = 50f;
+    private Message.C2S_PlayerInput pendingRateLimitedInput;
+    private long lastInputSendMs = 0L;
 
     public GameScreen(Main game) {
         this.game = Objects.requireNonNull(game);
@@ -153,6 +156,7 @@ public class GameScreen implements Screen {
     @Override
     public void render(float delta) {
         advanceLogicalClock(delta);
+        pumpPendingNetworkInput();
 
         if (!hasReceivedInitialState || playerTextureRegion == null) {
             Gdx.gl.glClearColor(0.1f, 0.1f, 0.1f, 1);
@@ -444,7 +448,7 @@ public class GameScreen implements Screen {
     }
 
     private void sendPlayerInputToServer(PlayerInputCommand cmd) {
-        if (game.getTcpClient() == null || game.getPlayerId() <= 0) return;
+        if (game.getPlayerId() <= 0) return;
 
         Message.Vector2 pbVec = Message.Vector2.newBuilder()
                 .setX(cmd.moveDir.x)
@@ -459,10 +463,34 @@ public class GameScreen implements Screen {
                 .setDeltaMs(cmd.getDeltaMs())
                 .build();
 
-        try {
-            game.getTcpClient().sendPlayerInput(inputMsg);
-        } catch (Exception e) {
-            Gdx.app.error(TAG, "Failed to send input", e);
+        enqueueInputForSend(inputMsg);
+    }
+
+    private void enqueueInputForSend(Message.C2S_PlayerInput inputMsg) {
+        long now = TimeUtils.millis();
+        if ((now - lastInputSendMs) < MIN_INPUT_SEND_INTERVAL_MS) {
+            pendingRateLimitedInput = inputMsg;
+            return;
+        }
+        sendInputImmediately(inputMsg, now);
+    }
+
+    private void sendInputImmediately(Message.C2S_PlayerInput msg, long timestampMs) {
+        if (game.trySendPlayerInput(msg)) {
+            lastInputSendMs = timestampMs;
+            pendingRateLimitedInput = null;
+        } else {
+            pendingRateLimitedInput = msg;
+        }
+    }
+
+    private void pumpPendingNetworkInput() {
+        if (pendingRateLimitedInput == null) {
+            return;
+        }
+        long now = TimeUtils.millis();
+        if ((now - lastInputSendMs) >= MIN_INPUT_SEND_INTERVAL_MS) {
+            sendInputImmediately(pendingRateLimitedInput, now);
         }
     }
 
