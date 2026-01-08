@@ -22,7 +22,7 @@ constexpr uint32_t kDefaultExpToNext = 100;
 constexpr std::size_t kMaxPendingInputs = 64;
 constexpr float kDirectionEpsilonSq = 1e-6f;
 constexpr float kMaxDirectionLengthSq = 1.21f;    // 略放宽，防止浮点误差
-constexpr uint32_t kFullSyncIntervalTicks = 300;  // ~5s @60Hz
+constexpr uint32_t kFullSyncIntervalTicks = 180;  // ~3s @60Hz
 
 // 计算朝向
 float DegreesFromDirection(float x, float y) {
@@ -35,7 +35,7 @@ float DegreesFromDirection(float x, float y) {
 
 std::chrono::milliseconds NowMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch());
+      std::chrono::steady_clock::now().time_since_epoch());
 }
 
 void FillSyncTiming(uint32_t room_id, uint64_t tick,
@@ -460,7 +460,6 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
   }
 
   const auto sessions = RoomManager::Instance().GetRoomSessions(room_id);
-  SendSyncToSessions(sessions, sync);
   if (udp_server_ != nullptr) {
     udp_server_->BroadcastState(room_id, sync);
   }
