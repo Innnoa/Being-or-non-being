@@ -19,17 +19,26 @@ uint16_t LoadPortFromConfig(std::string_view key, uint16_t fallback) {
     if (!file.is_open()) {
       continue;
     }
-    const std::string content((std::istreambuf_iterator<char>(file)),
-                              std::istreambuf_iterator<char>());
+    // string特殊构造，接受两个迭代器，迭代器活动并将内容存至content
+    const std::string content{std::istreambuf_iterator<char>(file),
+                              std::istreambuf_iterator<char>()};
+    // 用于在文件中(server_config.json)找对应字符(tcp_port和udp_port)的属性,这是一个正则表达式匹配规则
+    // 只有一个捕获组（\\d+)
     std::regex re(std::string("\"") + std::string(key) + "\"\\s*:\\s*(\\d+)");
+    // 用于存储字符串匹配结果
     std::smatch match;
+    // 根据re规则查询保存文件内容的content将结果保存到match
     if (std::regex_search(content, match, re) && match.size() > 1) {
       try {
+        // stoul --> string to unsigned long
+        // 返回找到的端口
+        // match[0] 是完整匹配，match[1] 是捕获组, 捕获组就是匹配规则中的（）的内容，在这里也就是端口量
         return static_cast<uint16_t>(std::stoul(match[1].str()));
       } catch (...) {
       }
     }
   }
+  // 没找到匹配的就使用实参
   return fallback;
 }
 }  // namespace
