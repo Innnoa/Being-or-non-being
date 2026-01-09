@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "config/server_config.hpp"
 #include "message.pb.h"
 
 class TcpSession;
@@ -18,6 +19,8 @@ class RoomManager {
 
   RoomManager(const RoomManager&) = delete;
   RoomManager& operator=(const RoomManager&) = delete;
+
+  void SetConfig(const ServerConfig& cfg) { config_ = cfg; }
 
   lawnmower::S2C_CreateRoomResult CreateRoom(
       uint32_t player_id, const std::string& player_name,
@@ -99,4 +102,5 @@ class RoomManager {
       rooms_;  // room_id - Room(room基本信息) （房间id对应房间信息)
   std::unordered_map<uint32_t, uint32_t>
       player_room_;  // player_id - room_id （玩家id对应房间id）
+  ServerConfig config_;
 };

@@ -7,7 +7,10 @@
 #include <deque>
 #include <google/protobuf/message.h>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "message.pb.h"
@@ -22,8 +25,13 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   void start();
   void SendProto(lawnmower::MessageType type,
                  const google::protobuf::Message& message);
+  static bool VerifyToken(uint32_t player_id, std::string_view token);
 
  private:
+  static std::string GenerateToken();
+  static void RegisterToken(uint32_t player_id, std::string token);
+  static void RevokeToken(uint32_t player_id);
+
   void read_header();
   void read_body(std::size_t length);
   void do_write();
@@ -38,6 +46,9 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   bool closed_ = false;
   uint32_t player_id_ = 0;
   std::string player_name_;
+  std::string session_token_;
   static std::atomic<uint32_t> next_player_id_;
   static std::atomic<uint32_t> active_sessions_;
+  static std::unordered_map<uint32_t, std::string> session_tokens_;
+  static std::mutex token_mutex_;
 };

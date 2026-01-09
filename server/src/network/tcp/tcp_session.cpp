@@ -1,17 +1,22 @@
 #include "network/tcp/tcp_session.hpp"
 
 #include <arpa/inet.h>
+#include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <random>
 #include <span>
 #include <spdlog/spdlog.h>
+#include <sstream>
 
 #include "game/managers/game_manager.hpp"
 #include "game/managers/room_manager.hpp"
 #include "network/udp/udp_server.hpp"
 
 namespace {
-constexpr std::size_t kMaxPacketSize = 64 * 1024;  // 设定最大包大小
+constexpr std::size_t kMaxPacketSize = 64 * 1024;   // 设定最大包大小
+constexpr std::size_t kMaxWriteQueueSize = 1024;    // 防止慢连接无限堆积
+constexpr std::size_t kTokenBytes = 16;             // 128bit 令牌
 
 // 类型转字符串
 std::string MessageTypeToString(lawnmower::MessageType type) {
@@ -38,12 +43,48 @@ void BroadcastToRoom(std::span<const std::weak_ptr<TcpSession>> sessions,
 std::atomic<uint32_t> TcpSession::next_player_id_{1};
 // 当前活跃会话数
 std::atomic<uint32_t> TcpSession::active_sessions_{0};
+std::unordered_map<uint32_t, std::string> TcpSession::session_tokens_{};
+std::mutex TcpSession::token_mutex_;
 
 TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) {}
 
 void TcpSession::start() {
   active_sessions_.fetch_add(1, std::memory_order_relaxed);
   read_header();
+}
+
+std::string TcpSession::GenerateToken() {
+  std::array<uint8_t, kTokenBytes> buf{};
+  static thread_local std::mt19937_64 rng(std::random_device{}());
+  for (std::size_t i = 0; i < kTokenBytes; i += sizeof(uint64_t)) {
+    const uint64_t v = rng();
+    std::memcpy(buf.data() + i, &v,
+                std::min(sizeof(uint64_t), kTokenBytes - i));
+  }
+  std::ostringstream oss;
+  oss << std::hex;
+  for (auto b : buf) {
+    oss.width(2);
+    oss.fill('0');
+    oss << static_cast<int>(b);
+  }
+  return oss.str();
+}
+
+void TcpSession::RegisterToken(uint32_t player_id, std::string token) {
+  std::lock_guard<std::mutex> lock(token_mutex_);
+  session_tokens_[player_id] = std::move(token);
+}
+
+bool TcpSession::VerifyToken(uint32_t player_id, std::string_view token) {
+  std::lock_guard<std::mutex> lock(token_mutex_);
+  const auto it = session_tokens_.find(player_id);
+  return it != session_tokens_.end() && it->second == token;
+}
+
+void TcpSession::RevokeToken(uint32_t player_id) {
+  std::lock_guard<std::mutex> lock(token_mutex_);
+  session_tokens_.erase(player_id);
 }
 
 // 专门用于发送 Packet 包，设置 Message_type 类型 + payload 内容
@@ -65,6 +106,7 @@ void TcpSession::handle_disconnect() {
   closed_ = true;
 
   if (player_id_ != 0) {
+    RevokeToken(player_id_);
     GameManager::Instance().RemovePlayer(player_id_);
     RoomManager::Instance().RemovePlayer(player_id_);
   }
@@ -178,11 +220,14 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
       player_name_ = login.player_name().empty()
                          ? ("玩家" + std::to_string(player_id_))
                          : login.player_name();
+      session_token_ = GenerateToken();
+      RegisterToken(player_id_, session_token_);
 
       lawnmower::S2C_LoginResult result;
       result.set_success(true);
       result.set_player_id(player_id_);
       result.set_message_login("login success");
+      result.set_session_token(session_token_);
 
       SendProto(MessageType::MSG_S2C_LOGIN_RESULT, result);
       spdlog::info("玩家登录: {} (id={})", player_name_, player_id_);
@@ -319,8 +364,18 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
 
       lawnmower::S2C_GameStateSync sync;
       if (GameManager::Instance().BuildFullState(snapshot->room_id, &sync)) {
+        bool sent_tcp = false;
         if (auto udp = GameManager::Instance().GetUdpServer()) {
-          udp->BroadcastState(snapshot->room_id, sync);
+          if (udp->HasAnyEndpoint(snapshot->room_id)) {
+            udp->BroadcastState(snapshot->room_id, sync);
+          } else {
+            // 尚未收到客户端 UDP，首帧用 TCP 兜底
+            BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+            sent_tcp = true;
+          }
+        } else {
+          BroadcastToRoom(sessions, MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+          sent_tcp = true;
         }
         GameManager::Instance().StartGameLoop(snapshot->room_id);
         // 再延迟一个 tick 推送一次全量同步，防止客户端切屏阶段错过首帧
@@ -336,7 +391,19 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
                 lawnmower::S2C_GameStateSync retry_sync;
                 if (GameManager::Instance().BuildFullState(room_id, &retry_sync)) {
                   if (auto udp = GameManager::Instance().GetUdpServer()) {
-                    udp->BroadcastState(room_id, retry_sync);
+                    if (udp->HasAnyEndpoint(room_id)) {
+                      udp->BroadcastState(room_id, retry_sync);
+                    } else {
+                      const auto retry_sessions =
+                          RoomManager::Instance().GetRoomSessions(room_id);
+                      BroadcastToRoom(retry_sessions,
+                                      MessageType::MSG_S2C_GAME_STATE_SYNC, retry_sync);
+                    }
+                  } else {
+                    const auto retry_sessions =
+                        RoomManager::Instance().GetRoomSessions(room_id);
+                    BroadcastToRoom(retry_sessions,
+                                    MessageType::MSG_S2C_GAME_STATE_SYNC, retry_sync);
                   }
                 }
               });
@@ -354,6 +421,12 @@ void TcpSession::handle_packet(const lawnmower::Packet& packet) {
 
       if (player_id_ == 0) {
         spdlog::warn("未登录玩家发送移动输入");
+        break;
+      }
+
+      if (!input.session_token().empty() &&
+          !VerifyToken(player_id_, input.session_token())) {
+        spdlog::warn("玩家 {} 输入令牌校验失败", player_id_);
         break;
       }
 
@@ -394,6 +467,12 @@ void TcpSession::send_packet(const lawnmower::Packet& packet) {
   std::memcpy(framed.data() + sizeof(net_len), data.data(), data.size());
 
   const bool write_in_progress = !write_queue_.empty();
+  if (write_queue_.size() >= kMaxWriteQueueSize) {
+    spdlog::warn("发送队列过长({})，断开玩家 {}", write_queue_.size(),
+                 player_id_);
+    handle_disconnect();
+    return;
+  }
   write_queue_.push_back(std::move(framed));
   if (!write_in_progress) {
     do_write();

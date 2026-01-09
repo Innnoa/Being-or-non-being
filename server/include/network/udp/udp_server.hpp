@@ -23,6 +23,8 @@ class UdpServer {
   // 广播游戏状态到指定房间的已登记终端
   void BroadcastState(uint32_t room_id,
                       const lawnmower::S2C_GameStateSync& sync);
+  // 标记某个 room 已经有 UDP 端点，便于上层决定何时只用 UDP
+  bool HasAnyEndpoint(uint32_t room_id) const;
 
  private:
   struct EndpointInfo {
@@ -44,6 +46,6 @@ class UdpServer {
   std::array<char, 64 * 1024> recv_buffer_{};
   udp::endpoint remote_endpoint_;
 
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::unordered_map<uint32_t, EndpointInfo> player_endpoints_;
 };

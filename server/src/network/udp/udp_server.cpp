@@ -7,6 +7,7 @@
 
 #include "game/managers/game_manager.hpp"
 #include "game/managers/room_manager.hpp"
+#include "network/tcp/tcp_session.hpp"
 
 namespace {
 constexpr std::chrono::seconds kEndpointTtl{10};
@@ -63,6 +64,12 @@ void UdpServer::HandlePlayerInput(const lawnmower::Packet& packet,
     return;
   }
 
+  if (input.session_token().empty() ||
+      !TcpSession::VerifyToken(player_id, input.session_token())) {
+    spdlog::debug("UDP 输入令牌校验失败 player_id={}", player_id);
+    return;
+  }
+
   auto room_opt = RoomManager::Instance().GetPlayerRoom(player_id);
   if (!room_opt.has_value()) {
     spdlog::debug("UDP 输入: player {} 不在任何房间，丢弃", player_id);
@@ -88,6 +95,8 @@ void UdpServer::BroadcastState(uint32_t room_id,
   packet.set_payload(sync.SerializeAsString());
 
   const auto targets = EndpointsForRoom(room_id);
+  spdlog::debug("UDP 广播房间 {} 状态，玩家数 {}，目标端点 {}",
+                room_id, sync.players_size(), targets.size());
   for (const auto& endpoint : targets) {
     SendPacket(packet, endpoint);
   }
@@ -113,15 +122,31 @@ std::vector<udp::endpoint> UdpServer::EndpointsForRoom(uint32_t room_id) {
   return endpoints;
 }
 
+bool UdpServer::HasAnyEndpoint(uint32_t room_id) const {
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& [_, info] : player_endpoints_) {
+    if (info.room_id == room_id &&
+        (now - info.last_seen) <= kEndpointTtl) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void UdpServer::SendPacket(const lawnmower::Packet& packet,
                            const udp::endpoint& to) {
   const std::string data = packet.SerializeAsString();
   socket_.async_send_to(asio::buffer(data), to,
-                        [to](const asio::error_code& ec, std::size_t) {
+                        [to](const asio::error_code& ec, std::size_t bytes) {
                           if (ec && ec != asio::error::operation_aborted) {
                             const std::string addr = to.address().to_string();
                             spdlog::debug("UDP 发送到 {}:{} 失败: {}", addr,
                                           to.port(), ec.message());
+                          } else {
+                            spdlog::debug("UDP 发送 {} bytes 到 {}:{}",
+                                          bytes, to.address().to_string(),
+                                          to.port());
                           }
                         });
 }

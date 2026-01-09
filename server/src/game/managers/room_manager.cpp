@@ -39,7 +39,14 @@ lawnmower::S2C_CreateRoomResult RoomManager::CreateRoom(  // 创建房间
     room.name = request.room_name().empty()
                     ? ("房间" + std::to_string(room.room_id))
                     : request.room_name();
-    room.max_players = request.max_players() == 0 ? 4 : request.max_players();
+    const uint32_t configured_max =
+        config_.max_players_per_room > 0 ? config_.max_players_per_room : 4;
+    if (request.max_players() == 0) {
+      room.max_players = configured_max;
+    } else {
+      room.max_players = std::max<uint32_t>(
+          1, std::min(request.max_players(), configured_max));
+    }
     room.is_playing = false;
 
     // 玩家玩家基本信息

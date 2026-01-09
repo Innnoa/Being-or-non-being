@@ -4,9 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <fstream>
 #include <numbers>
-#include <regex>
 #include <span>
 #include <spdlog/spdlog.h>
 #include <string_view>
@@ -71,7 +69,13 @@ GameManager& GameManager::Instance() {
 
 // 构建默认配置
 GameManager::SceneConfig GameManager::BuildDefaultConfig() const {
-  return LoadConfigFromFile();
+  SceneConfig cfg;
+  cfg.width = config_.map_width;
+  cfg.height = config_.map_height;
+  cfg.tick_rate = config_.tick_rate;
+  cfg.state_sync_rate = config_.state_sync_rate;
+  cfg.move_speed = config_.move_speed;
+  return cfg;
 }
 
 void GameManager::SetIoContext(asio::io_context* io) { io_context_ = io; }
@@ -459,8 +463,17 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
     return;
   }
 
-  if (udp_server_ != nullptr) {
+  const bool has_udp =
+      udp_server_ != nullptr && udp_server_->HasAnyEndpoint(room_id);
+  if (udp_server_ != nullptr && has_udp) {
     udp_server_->BroadcastState(room_id, sync);
+  } else {
+    const auto sessions = RoomManager::Instance().GetRoomSessions(room_id);
+    if (!sessions.empty()) {
+      SendSyncToSessions(sessions, sync);
+    } else {
+      spdlog::debug("房间 {} 无可用会话，跳过 TCP 同步兜底", room_id);
+    }
   }
 }
 
@@ -580,52 +593,4 @@ void GameManager::RemovePlayer(uint32_t player_id) {
       timer->cancel();
     }
   }
-}
-GameManager::SceneConfig GameManager::LoadConfigFromFile() const {
-  SceneConfig cfg;
-  constexpr std::array<std::string_view, 3> kConfigPaths = {
-      "config/server_config.json", "../config/server_config.json",
-      "server/config/server_config.json"};
-
-  std::ifstream file;
-  for (const auto path : kConfigPaths) {
-    file = std::ifstream(std::string(path));
-    if (file.is_open()) {
-      break;
-    }
-  }
-  if (!file.is_open()) {
-    return cfg;
-  }
-
-  const std::string content((std::istreambuf_iterator<char>(file)),
-                            std::istreambuf_iterator<char>());
-
-  const auto extract_uint = [&content](std::string_view key, uint32_t* out) {
-    std::regex re(std::string("\"") + std::string(key) + "\"\\s*:\\s*(\\d+)");
-    std::smatch match;
-    if (std::regex_search(content, match, re) && match.size() > 1) {
-      try {
-        *out = static_cast<uint32_t>(std::stoul(match[1].str()));
-      } catch (...) {
-      }
-    }
-  };
-
-  extract_uint("map_width", &cfg.width);
-  extract_uint("map_height", &cfg.height);
-  extract_uint("tick_rate", &cfg.tick_rate);
-  extract_uint("state_sync_rate", &cfg.state_sync_rate);
-
-  std::regex speed_re("\"move_speed\"\\s*:\\s*(\\d+\\.?\\d*)");
-  std::smatch speed_match;
-  if (std::regex_search(content, speed_match, speed_re) &&
-      speed_match.size() > 1) {
-    try {
-      cfg.move_speed = std::stof(speed_match[1].str());
-    } catch (...) {
-    }
-  }
-
-  return cfg;
 }

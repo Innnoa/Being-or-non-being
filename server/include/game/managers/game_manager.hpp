@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "config/server_config.hpp"
 #include "game/managers/room_manager.hpp"
 #include "message.pb.h"
 
@@ -37,6 +38,7 @@ class GameManager {
   void SetUdpServer(UdpServer* udp);
   [[nodiscard]] UdpServer* GetUdpServer() const { return udp_server_; }
   [[nodiscard]] asio::io_context* GetIoContext() const { return io_context_; }
+  void SetConfig(const ServerConfig& cfg) { config_ = cfg; }
 
   // 在游戏开始后为房间启动固定逻辑帧循环与状态同步
   void StartGameLoop(uint32_t room_id);
@@ -86,7 +88,6 @@ class GameManager {
   };
 
   SceneConfig BuildDefaultConfig() const;
-  SceneConfig LoadConfigFromFile() const;
   void PlacePlayers(const RoomManager::RoomSnapshot& snapshot, Scene* scene);
   void ProcessSceneTick(uint32_t room_id, double tick_interval_seconds);
   void ScheduleGameTick(uint32_t room_id, std::chrono::microseconds interval,
@@ -101,4 +102,5 @@ class GameManager {
 
   asio::io_context* io_context_ = nullptr;
   UdpServer* udp_server_ = nullptr;
+  ServerConfig config_;
 };
