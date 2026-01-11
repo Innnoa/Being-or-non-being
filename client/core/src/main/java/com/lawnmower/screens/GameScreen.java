@@ -16,8 +16,10 @@ import com.badlogic.gdx.graphics.g2d.TextureAtlas;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.TimeUtils;
 import com.badlogic.gdx.utils.viewport.FitViewport;
+import com.lawnmower.enemies.EnemyView;
 import com.lawnmower.Main;
 import com.lawnmower.players.PlayerInputCommand;
 import com.lawnmower.players.PlayerStateSnapshot;
@@ -40,6 +42,7 @@ public class GameScreen implements Screen {
     private static final float MIN_COMMAND_DURATION = 1f / 120f;
     private static final long SNAPSHOT_RETENTION_MS = 400L;
     private static final long MAX_EXTRAPOLATION_MS = 150L;
+    private static final int DEFAULT_ENEMY_ID = 1;
     private static final long INTERP_DELAY_MIN_MS = 60L;
     private static final long INTERP_DELAY_MAX_MS = 180L;
 
@@ -60,6 +63,7 @@ public class GameScreen implements Screen {
     private final Vector2 renderBuffer = new Vector2();
     private final Map<Integer, Message.PlayerState> serverPlayerStates = new HashMap<>();
     private final Map<Integer, Message.EnemyState> enemyStateCache = new HashMap<>();
+    private final Map<Integer, EnemyView> enemyViews = new HashMap<>();
     private final Map<Integer, Deque<ServerPlayerSnapshot>> remotePlayerServerSnapshots = new HashMap<>();
     private final Map<Integer, Boolean> remoteFacingRight = new HashMap<>();
     private final Map<Integer, Long> remotePlayerLastSeen = new HashMap<>();
@@ -77,6 +81,10 @@ public class GameScreen implements Screen {
     private Animation<TextureRegion> playerIdleAnimation;
     private TextureRegion playerTextureRegion;
     private Texture backgroundTexture;
+    private TextureAtlas zombieWalkAtlas;
+    private Animation<TextureRegion> zombieWalkAnimation;
+    private Texture enemyFallbackTexture;
+    private TextureRegion enemyFallbackRegion;
     private float playerAnimationTime = 0f;
     private BitmapFont loadingFont;
     private GlyphLayout loadingLayout;
@@ -189,6 +197,12 @@ public class GameScreen implements Screen {
             pixmap.dispose();
         }
 
+        loadEnemyAssets();
+        enemyViews.clear();
+        EnemyView defaultEnemy = ensureEnemyView(DEFAULT_ENEMY_ID);
+        renderBuffer.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
+        defaultEnemy.teleport(renderBuffer, TimeUtils.millis());
+
         predictedPosition.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
         displayPosition.set(predictedPosition);
         resetInitialStateTracking();
@@ -225,6 +239,7 @@ public class GameScreen implements Screen {
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         batch.draw(backgroundTexture, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+        renderEnemies(renderDelta);
 
         playerAnimationTime += renderDelta;
         TextureRegion currentFrame = playerIdleAnimation != null
@@ -422,6 +437,63 @@ public class GameScreen implements Screen {
         }
     }
 
+    private void renderEnemies(float delta) {
+        if (batch == null || enemyViews.isEmpty()) {
+            return;
+        }
+        for (EnemyView view : enemyViews.values()) {
+            view.render(batch, delta);
+        }
+    }
+
+    private EnemyView ensureEnemyView(int enemyId) {
+        EnemyView view = enemyViews.get(enemyId);
+        TextureRegion fallback = getEnemyFallbackRegion();
+        if (view == null) {
+            Vector2 spawn = new Vector2(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
+            view = new EnemyView(enemyId, spawn, zombieWalkAnimation, fallback);
+            enemyViews.put(enemyId, view);
+        } else {
+            view.setAnimation(zombieWalkAnimation, fallback);
+        }
+        return view;
+    }
+
+    private void loadEnemyAssets() {
+        if (zombieWalkAtlas != null) {
+            zombieWalkAtlas.dispose();
+            zombieWalkAtlas = null;
+        }
+        zombieWalkAnimation = null;
+        try {
+            zombieWalkAtlas = new TextureAtlas(Gdx.files.internal("Zombie/NormalZombie/Walk/walk.atlas"));
+            Array<TextureAtlas.AtlasRegion> regions = zombieWalkAtlas.findRegions("zombie");
+            if (regions != null && regions.size > 0) {
+                zombieWalkAnimation = new Animation<>(0.08f, regions, Animation.PlayMode.LOOP);
+            } else {
+                Gdx.app.log(TAG, "Zombie atlas missing region 'zombie', fallback sprite will be used");
+            }
+        } catch (Exception e) {
+            Gdx.app.log(TAG, "Failed to load zombie animation", e);
+            if (zombieWalkAtlas != null) {
+                zombieWalkAtlas.dispose();
+                zombieWalkAtlas = null;
+            }
+        }
+    }
+
+    private TextureRegion getEnemyFallbackRegion() {
+        if (enemyFallbackRegion == null) {
+            Pixmap pixmap = new Pixmap(72, 72, Pixmap.Format.RGBA8888);
+            pixmap.setColor(0.3f, 0.7f, 0.2f, 1f);
+            pixmap.fillCircle(36, 36, 34);
+            enemyFallbackTexture = new Texture(pixmap);
+            enemyFallbackRegion = new TextureRegion(enemyFallbackTexture);
+            pixmap.dispose();
+        }
+        return enemyFallbackRegion;
+    }
+
     private void drawCharacterFrame(TextureRegion frame, float centerX, float centerY, boolean faceRight) {
         if (frame == null) {
             return;
@@ -616,6 +688,7 @@ public class GameScreen implements Screen {
             for (Message.EnemyState enemy : sync.getEnemiesList()) {
                 enemyStateCache.put((int) enemy.getEnemyId(), enemy);
             }
+            syncEnemyViews(sync.getEnemiesList(), sync.getServerTimeMs());
         }
         handlePlayersFromServer(sync.getPlayersList(), sync.getServerTimeMs());
     }
@@ -634,13 +707,20 @@ public class GameScreen implements Screen {
                 mergedPlayers.add(merged);
             }
         }
+        List<Message.EnemyState> updatedEnemies = new ArrayList<>(delta.getEnemiesCount());
         for (Message.EnemyStateDelta enemyDelta : delta.getEnemiesList()) {
-            mergeEnemyDelta(enemyDelta);
+            Message.EnemyState mergedEnemy = mergeEnemyDelta(enemyDelta);
+            if (mergedEnemy != null) {
+                updatedEnemies.add(mergedEnemy);
+            }
         }
 
         updateSyncArrivalStats(arrivalMs);
         sampleClockOffset(delta.getServerTimeMs());
         handlePlayersFromServer(mergedPlayers, delta.getServerTimeMs());
+        if (!updatedEnemies.isEmpty()) {
+            syncEnemyViews(updatedEnemies, delta.getServerTimeMs());
+        }
     }
 
     private void handlePlayersFromServer(Collection<Message.PlayerState> players, long serverTimeMs) {
@@ -671,6 +751,24 @@ public class GameScreen implements Screen {
 
         if (selfStateFromServer != null) {
             applySelfStateFromServer(selfStateFromServer);
+        }
+    }
+
+    private void syncEnemyViews(Collection<Message.EnemyState> enemies, long serverTimeMs) {
+        if (enemies == null || enemies.isEmpty()) {
+            return;
+        }
+        for (Message.EnemyState enemy : enemies) {
+            if (enemy == null) {
+                continue;
+            }
+            EnemyView view = ensureEnemyView((int) enemy.getEnemyId());
+            if (!enemy.hasPosition()) {
+                continue;
+            }
+            renderBuffer.set(enemy.getPosition().getX(), enemy.getPosition().getY());
+            clampPositionToMap(renderBuffer);
+            view.applyServerState(renderBuffer, enemy.getIsAlive(), serverTimeMs);
         }
     }
 
@@ -846,15 +944,15 @@ public class GameScreen implements Screen {
         return updated;
     }
 
-    private void mergeEnemyDelta(Message.EnemyStateDelta delta) {
+    private Message.EnemyState mergeEnemyDelta(Message.EnemyStateDelta delta) {
         if (delta == null) {
-            return;
+            return null;
         }
         int enemyId = (int) delta.getEnemyId();
         Message.EnemyState base = enemyStateCache.get(enemyId);
         if (base == null) {
             requestDeltaResync("enemy_" + enemyId);
-            return;
+            return null;
         }
 
         Message.EnemyState.Builder builder = base.toBuilder();
@@ -868,7 +966,9 @@ public class GameScreen implements Screen {
         if ((mask & ENEMY_DELTA_IS_ALIVE_MASK) != 0 && delta.hasIsAlive()) {
             builder.setIsAlive(delta.getIsAlive());
         }
-        enemyStateCache.put(enemyId, builder.build());
+        Message.EnemyState updated = builder.build();
+        enemyStateCache.put(enemyId, updated);
+        return updated;
     }
 
     private void requestDeltaResync(String reason) {
@@ -926,6 +1026,16 @@ public class GameScreen implements Screen {
         if (batch != null) batch.dispose();
         if (playerTexture != null) playerTexture.dispose();
         if (playerAtlas != null) playerAtlas.dispose();
+        if (zombieWalkAtlas != null) {
+            zombieWalkAtlas.dispose();
+            zombieWalkAtlas = null;
+        }
+        if (enemyFallbackTexture != null) {
+            enemyFallbackTexture.dispose();
+            enemyFallbackTexture = null;
+            enemyFallbackRegion = null;
+        }
+        enemyViews.clear();
         if (backgroundTexture != null) backgroundTexture.dispose();
         if (loadingFont != null) {
             loadingFont.dispose();

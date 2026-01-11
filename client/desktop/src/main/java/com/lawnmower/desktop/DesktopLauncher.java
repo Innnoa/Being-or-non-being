@@ -13,7 +13,7 @@ public class DesktopLauncher {
 
     public static void main(String[] args) {
         Lwjgl3ApplicationConfiguration config = new Lwjgl3ApplicationConfiguration();
-        config.setTitle("LawnMower Game");
+        config.setTitle("植物大战僵尸-ROGUELIKE");
         config.setWindowedMode(1000, 563);
         config.setForegroundFPS(60);
 

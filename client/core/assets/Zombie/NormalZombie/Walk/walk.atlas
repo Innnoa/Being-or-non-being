@@ -1,0 +1,160 @@
+
+walk.png
+size: 512, 1024
+format: RGBA8888
+filter: Nearest, Nearest
+repeat: none
+zombie
+  rotate: false
+  xy: 2, 878
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 0
+zombie
+  rotate: false
+  xy: 2, 732
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 1
+zombie
+  rotate: false
+  xy: 170, 878
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 2
+zombie
+  rotate: false
+  xy: 2, 586
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 3
+zombie
+  rotate: false
+  xy: 170, 732
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 4
+zombie
+  rotate: false
+  xy: 338, 878
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 5
+zombie
+  rotate: false
+  xy: 2, 440
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 6
+zombie
+  rotate: false
+  xy: 170, 586
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 7
+zombie
+  rotate: false
+  xy: 338, 732
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 8
+zombie
+  rotate: false
+  xy: 2, 294
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 9
+zombie
+  rotate: false
+  xy: 170, 440
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 10
+zombie
+  rotate: false
+  xy: 338, 586
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 11
+zombie
+  rotate: false
+  xy: 2, 148
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 12
+zombie
+  rotate: false
+  xy: 2, 2
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 13
+zombie
+  rotate: false
+  xy: 170, 294
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 14
+zombie
+  rotate: false
+  xy: 170, 294
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 15
+zombie
+  rotate: false
+  xy: 338, 440
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 16
+zombie
+  rotate: false
+  xy: 170, 148
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 17
+zombie
+  rotate: false
+  xy: 170, 2
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 18
+zombie
+  rotate: false
+  xy: 338, 294
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 19
+zombie
+  rotate: false
+  xy: 338, 148
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 20
+zombie
+  rotate: false
+  xy: 338, 2
+  size: 166, 144
+  orig: 166, 144
+  offset: 0, 0
+  index: 21

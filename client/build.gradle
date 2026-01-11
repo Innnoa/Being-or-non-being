@@ -120,10 +120,15 @@ project(":desktop") {
         args = ['../assets-raw/Plants/PeaShooter/Standby', '../core/assets/Plants/PeaShooter/Standby', 'standby']
     }
 
+    task packNormalZombie(type: JavaExec) {
+        mainClass = 'com.badlogic.gdx.tools.texturepacker.TexturePacker'
+        classpath = configurations.texturePacker
+        args = ['../assets-raw/Zombie/NormalZombie/Walk', '../core/assets/Zombie/NormalZombie/Walk', 'walk']
+    }
 
     // 一键打包所有
     task runTexturePacker {
-        dependsOn packPeaShooter
+        dependsOn packNormalZombie
         doLast {
             logger.lifecycle("PeaShooter atlas packed.")
         }
