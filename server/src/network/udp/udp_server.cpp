@@ -117,8 +117,9 @@ std::size_t UdpServer::BroadcastState(
       std::make_shared<std::string>(packet.SerializeAsString());
 
   if (spdlog::should_log(spdlog::level::debug)) {
-    spdlog::debug("UDP 广播房间 {} 状态，玩家数 {}，目标端点 {}", room_id,
-                  sync.players_size(), targets.size());
+    spdlog::debug("UDP 广播房间 {} 状态，players={} enemies={}，目标端点 {}",
+                  room_id, sync.players_size(), sync.enemies_size(),
+                  targets.size());
   }
   for (const auto& endpoint : targets) {
     SendPacket(data, endpoint);

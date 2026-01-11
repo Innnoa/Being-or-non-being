@@ -48,6 +48,7 @@ std::mutex TcpSession::token_mutex_;
 
 TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) {}
 
+// 服务器入口函数
 void TcpSession::start() {
   active_sessions_.fetch_add(1, std::memory_order_relaxed);
   read_header();

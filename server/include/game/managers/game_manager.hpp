@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -73,10 +74,31 @@ class GameManager {
     bool dirty = false;
   };
 
+  struct EnemyRuntime {
+    lawnmower::EnemyState state;
+    uint32_t target_player_id = 0;
+    std::vector<std::pair<int, int>> path;
+    std::size_t path_index = 0;
+    double replan_elapsed = 0.0;
+    uint32_t force_sync_left = 0;
+    bool dirty = false;
+  };
+
   struct Scene {
     SceneConfig config;
     std::unordered_map<uint32_t, PlayerRuntime>
         players;  // 玩家对应玩家运行状态
+    std::unordered_map<uint32_t, EnemyRuntime> enemies;
+    uint32_t next_enemy_id = 1;
+    uint32_t wave_id = 0;
+    double elapsed = 0.0;
+    double spawn_elapsed = 0.0;
+    uint32_t rng_state = 1;
+    int nav_cells_x = 0;
+    int nav_cells_y = 0;
+    std::vector<int> nav_came_from;
+    std::vector<float> nav_g_score;
+    std::vector<uint8_t> nav_closed;
     uint64_t tick = 0;
     double sync_accumulator = 0.0;  // 以秒计
     double full_sync_elapsed = 0.0;

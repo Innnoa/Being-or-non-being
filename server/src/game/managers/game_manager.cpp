@@ -4,11 +4,14 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <numbers>
+#include <queue>
 #include <span>
 #include <spdlog/spdlog.h>
 #include <string_view>
 
+#include "game/entities/enemy_types.hpp"
 #include "network/tcp/tcp_session.hpp"
 #include "network/udp/udp_server.hpp"
 
@@ -22,6 +25,18 @@ constexpr float kDirectionEpsilonSq = 1e-6f;
 constexpr float kMaxDirectionLengthSq = 1.21f;    // 略放宽，防止浮点误差
 constexpr uint32_t kFullSyncIntervalTicks = 180;  // ~3s @60Hz
 
+constexpr int kNavCellSize = 100;  // px
+constexpr float kEnemySpawnInset = 10.0f;  // 避免精确落在边界导致 clamp 抖动
+constexpr std::size_t kMaxEnemiesAlive = 256;
+constexpr double kWaveIntervalSeconds = 15.0;
+constexpr double kEnemySpawnBasePerSecond = 1.0;
+constexpr double kEnemySpawnPerPlayerPerSecond = 0.75;
+constexpr double kEnemySpawnWaveGrowthPerSecond = 0.2;
+constexpr std::size_t kMaxEnemySpawnPerTick = 4;
+constexpr double kEnemyReplanIntervalSeconds = 0.25;
+constexpr float kEnemyWaypointReachRadius = 12.0f;
+constexpr uint32_t kEnemySpawnForceSyncCount = 6;  // 新刷怪多发几次，降低 UDP 丢包影响
+
 // 计算朝向
 float DegreesFromDirection(float x, float y) {
   if (std::abs(x) < 1e-6f && std::abs(y) < 1e-6f) {
@@ -34,6 +49,169 @@ float DegreesFromDirection(float x, float y) {
 std::chrono::milliseconds NowMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now().time_since_epoch());
+}
+
+uint32_t NextRng(uint32_t* state) {
+  if (state == nullptr) {
+    return 0;
+  }
+  // LCG: fast & deterministic for gameplay purposes.
+  *state = (*state * 1664525u) + 1013904223u;
+  return *state;
+}
+
+float NextRngUnitFloat(uint32_t* state) {
+  const uint32_t r = NextRng(state);
+  // Use high 24 bits to build [0,1) float.
+  return static_cast<float>((r >> 8) & 0x00FFFFFF) * (1.0f / 16777216.0f);
+}
+
+struct NavGrid {
+  int cells_x = 0;
+  int cells_y = 0;
+  int cell_size = kNavCellSize;
+};
+
+int ClampInt(int v, int lo, int hi) { return std::min(std::max(v, lo), hi); }
+
+int ToIndex(const NavGrid& grid, int x, int y) { return y * grid.cells_x + x; }
+
+std::pair<int, int> WorldToCell(const NavGrid& grid, float x, float y) {
+  const int cx = ClampInt(static_cast<int>(x / static_cast<float>(grid.cell_size)),
+                          0, std::max(0, grid.cells_x - 1));
+  const int cy = ClampInt(static_cast<int>(y / static_cast<float>(grid.cell_size)),
+                          0, std::max(0, grid.cells_y - 1));
+  return {cx, cy};
+}
+
+std::pair<float, float> CellCenterWorld(const NavGrid& grid, int cx, int cy) {
+  const float fx = (static_cast<float>(cx) + 0.5f) *
+                   static_cast<float>(grid.cell_size);
+  const float fy = (static_cast<float>(cy) + 0.5f) *
+                   static_cast<float>(grid.cell_size);
+  return {fx, fy};
+}
+
+float Heuristic(const std::pair<int, int>& a, const std::pair<int, int>& b) {
+  const float dx = static_cast<float>(a.first - b.first);
+  const float dy = static_cast<float>(a.second - b.second);
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+bool FindPathAstar(const NavGrid& grid, const std::pair<int, int>& start,
+                   const std::pair<int, int>& goal,
+                   std::vector<std::pair<int, int>>* out_path,
+                   std::vector<int>& came_from,
+                   std::vector<float>& g_score,
+                   std::vector<uint8_t>& closed) {
+  if (out_path == nullptr) {
+    return false;
+  }
+  out_path->clear();
+  if (grid.cells_x <= 0 || grid.cells_y <= 0) {
+    return false;
+  }
+
+  const int total = grid.cells_x * grid.cells_y;
+  if (total <= 0) {
+    return false;
+  }
+
+  came_from.assign(static_cast<std::size_t>(total), -1);
+  g_score.assign(static_cast<std::size_t>(total),
+                 std::numeric_limits<float>::infinity());
+  closed.assign(static_cast<std::size_t>(total), 0);
+
+  const int start_idx = ToIndex(grid, start.first, start.second);
+  const int goal_idx = ToIndex(grid, goal.first, goal.second);
+  if (start_idx < 0 || start_idx >= total || goal_idx < 0 || goal_idx >= total) {
+    return false;
+  }
+
+  struct OpenNode {
+    int idx = 0;
+    float f = 0.0f;
+    float g = 0.0f;
+  };
+  auto cmp = [](const OpenNode& a, const OpenNode& b) { return a.f > b.f; };
+  std::priority_queue<OpenNode, std::vector<OpenNode>, decltype(cmp)> open(cmp);
+
+  g_score[static_cast<std::size_t>(start_idx)] = 0.0f;
+  open.push(OpenNode{start_idx, Heuristic(start, goal), 0.0f});
+
+  constexpr std::array<std::pair<int, int>, 8> kDirs = {{
+      {1, 0},  {-1, 0}, {0, 1},  {0, -1},
+      {1, 1},  {1, -1}, {-1, 1}, {-1, -1},
+  }};
+
+  bool found = false;
+  while (!open.empty()) {
+    const OpenNode cur = open.top();
+    open.pop();
+    if (cur.idx == goal_idx) {
+      found = true;
+      break;
+    }
+    if (closed[static_cast<std::size_t>(cur.idx)] != 0) {
+      continue;
+    }
+    closed[static_cast<std::size_t>(cur.idx)] = 1;
+
+    const int cx = cur.idx % grid.cells_x;
+    const int cy = cur.idx / grid.cells_x;
+
+    for (const auto& [dx, dy] : kDirs) {
+      const int nx = cx + dx;
+      const int ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= grid.cells_x || ny >= grid.cells_y) {
+        continue;
+      }
+      const int nidx = ToIndex(grid, nx, ny);
+      if (closed[static_cast<std::size_t>(nidx)] != 0) {
+        continue;
+      }
+
+      const float step_cost = (dx == 0 || dy == 0) ? 1.0f : std::numbers::sqrt2_v<float>;
+      const float tentative_g =
+          g_score[static_cast<std::size_t>(cur.idx)] + step_cost;
+      if (tentative_g < g_score[static_cast<std::size_t>(nidx)]) {
+        came_from[static_cast<std::size_t>(nidx)] = cur.idx;
+        g_score[static_cast<std::size_t>(nidx)] = tentative_g;
+        const std::pair<int, int> ncell{nx, ny};
+        const float f = tentative_g + Heuristic(ncell, goal);
+        open.push(OpenNode{nidx, f, tentative_g});
+      }
+    }
+  }
+
+  if (!found) {
+    return false;
+  }
+
+  // Reconstruct path (goal -> start).
+  std::vector<int> rev;
+  rev.reserve(32);
+  int cur = goal_idx;
+  while (cur >= 0 && cur < total) {
+    rev.push_back(cur);
+    if (cur == start_idx) {
+      break;
+    }
+    cur = came_from[static_cast<std::size_t>(cur)];
+  }
+
+  if (rev.empty() || rev.back() != start_idx) {
+    return false;
+  }
+
+  out_path->reserve(rev.size());
+  for (auto it = rev.rbegin(); it != rev.rend(); ++it) {
+    const int idx = *it;
+    const int x = idx % grid.cells_x;
+    const int y = idx / grid.cells_x;
+    out_path->push_back({x, y});
+  }
+  return true;
 }
 
 void FillSyncTiming(uint32_t room_id, uint64_t tick,
@@ -251,7 +429,87 @@ lawnmower::SceneInfo GameManager::CreateScene(
 
   Scene scene;
   scene.config = BuildDefaultConfig();           // 构建默认配置
+  scene.next_enemy_id = 1;
+  scene.elapsed = 0.0;
+  scene.spawn_elapsed = 0.0;
+  scene.wave_id = 1;
+  scene.rng_state = snapshot.room_id ^ static_cast<uint32_t>(NowMs().count());
+  if (scene.rng_state == 0) {
+    scene.rng_state = 1;
+  }
+
+  scene.nav_cells_x =
+      std::max(1, static_cast<int>((scene.config.width + kNavCellSize - 1) /
+                                   kNavCellSize));
+  scene.nav_cells_y =
+      std::max(1, static_cast<int>((scene.config.height + kNavCellSize - 1) /
+                                   kNavCellSize));
+  const std::size_t nav_cells =
+      static_cast<std::size_t>(scene.nav_cells_x * scene.nav_cells_y);
+  scene.nav_came_from.assign(nav_cells, -1);
+  scene.nav_g_score.assign(nav_cells, 0.0f);
+  scene.nav_closed.assign(nav_cells, 0);
+
   PlacePlayers(snapshot, &scene);                // 放置玩家？
+
+  auto spawn_enemy = [&](uint32_t type_id) {
+    if (scene.enemies.size() >= kMaxEnemiesAlive) {
+      return;
+    }
+    const EnemyType* type = FindEnemyType(type_id);
+    if (type == nullptr) {
+      type = &DefaultEnemyType();
+    }
+
+    const float map_w = static_cast<float>(scene.config.width);
+    const float map_h = static_cast<float>(scene.config.height);
+    const float t = NextRngUnitFloat(&scene.rng_state);
+    const uint32_t edge = NextRng(&scene.rng_state) % 4u;
+
+    float x = 0.0f;
+    float y = 0.0f;
+    switch (edge) {
+      case 0:  // left
+        x = kEnemySpawnInset;
+        y = t * map_h;
+        break;
+      case 1:  // right
+        x = std::max(0.0f, map_w - kEnemySpawnInset);
+        y = t * map_h;
+        break;
+      case 2:  // bottom
+        x = t * map_w;
+        y = kEnemySpawnInset;
+        break;
+      default:  // top
+        x = t * map_w;
+        y = std::max(0.0f, map_h - kEnemySpawnInset);
+        break;
+    }
+
+    EnemyRuntime runtime;
+    runtime.state.set_enemy_id(scene.next_enemy_id++);
+    runtime.state.set_type_id(type->type_id);
+    const auto clamped_pos = ClampToMap(scene.config, x, y);
+    runtime.state.mutable_position()->set_x(clamped_pos.x());
+    runtime.state.mutable_position()->set_y(clamped_pos.y());
+    runtime.state.set_health(type->max_health);
+    runtime.state.set_max_health(type->max_health);
+    runtime.state.set_is_alive(true);
+    runtime.state.set_wave_id(scene.wave_id);
+    runtime.state.set_is_friendly(false);
+    runtime.force_sync_left = kEnemySpawnForceSyncCount;
+    runtime.dirty = true;
+    scene.enemies.emplace(runtime.state.enemy_id(), std::move(runtime));
+  };
+
+  const std::size_t initial_enemy_count =
+      std::max<std::size_t>(1, snapshot.players.size() * 2);
+  for (std::size_t i = 0; i < initial_enemy_count; ++i) {
+    const std::size_t idx = static_cast<std::size_t>(NextRng(&scene.rng_state)) %
+                            kEnemyTypes.size();
+    spawn_enemy(kEnemyTypes[idx].type_id);
+  }
   scenes_[snapshot.room_id] = std::move(scene);  // 房间对应会话map
 
   lawnmower::SceneInfo scene_info;  // 场景信息
@@ -289,6 +547,10 @@ bool GameManager::BuildFullState(uint32_t room_id,
     auto* player_state = sync->add_players();
     *player_state = runtime.state;
     player_state->set_last_processed_input_seq(runtime.last_input_seq);
+  }
+  for (const auto& [_, runtime] : scene.enemies) {
+    auto* enemy_state = sync->add_enemies();
+    *enemy_state = runtime.state;
   }
   return true;
 }
@@ -419,6 +681,224 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
       has_dirty = has_dirty || runtime.dirty;
     }
 
+    scene.elapsed += dt_seconds;
+    scene.wave_id = std::max<uint32_t>(
+        1, 1u + static_cast<uint32_t>(scene.elapsed / kWaveIntervalSeconds));
+
+    const std::size_t alive_players =
+        std::count_if(scene.players.begin(), scene.players.end(),
+                      [](const auto& kv) { return kv.second.state.is_alive(); });
+
+    auto spawn_enemy = [&](uint32_t type_id) {
+      if (scene.enemies.size() >= kMaxEnemiesAlive) {
+        return false;
+      }
+      if (alive_players == 0) {
+        return false;
+      }
+
+      const EnemyType* type = FindEnemyType(type_id);
+      if (type == nullptr) {
+        type = &DefaultEnemyType();
+      }
+
+      const float map_w = static_cast<float>(scene.config.width);
+      const float map_h = static_cast<float>(scene.config.height);
+      const float t = NextRngUnitFloat(&scene.rng_state);
+      const uint32_t edge = NextRng(&scene.rng_state) % 4u;
+
+      float x = 0.0f;
+      float y = 0.0f;
+      switch (edge) {
+        case 0:
+          x = kEnemySpawnInset;
+          y = t * map_h;
+          break;
+        case 1:
+          x = std::max(0.0f, map_w - kEnemySpawnInset);
+          y = t * map_h;
+          break;
+        case 2:
+          x = t * map_w;
+          y = kEnemySpawnInset;
+          break;
+        default:
+          x = t * map_w;
+          y = std::max(0.0f, map_h - kEnemySpawnInset);
+          break;
+      }
+
+      EnemyRuntime runtime;
+      runtime.state.set_enemy_id(scene.next_enemy_id++);
+      runtime.state.set_type_id(type->type_id);
+      const auto clamped_pos = ClampToMap(scene.config, x, y);
+      runtime.state.mutable_position()->set_x(clamped_pos.x());
+      runtime.state.mutable_position()->set_y(clamped_pos.y());
+      runtime.state.set_health(type->max_health);
+      runtime.state.set_max_health(type->max_health);
+      runtime.state.set_is_alive(true);
+      runtime.state.set_wave_id(scene.wave_id);
+      runtime.state.set_is_friendly(false);
+      runtime.force_sync_left = kEnemySpawnForceSyncCount;
+      runtime.dirty = true;
+      scene.enemies.emplace(runtime.state.enemy_id(), std::move(runtime));
+      return true;
+    };
+
+    if (alive_players > 0) {
+      const double wave_boost =
+          static_cast<double>(scene.wave_id > 0 ? scene.wave_id - 1 : 0);
+      const double spawn_rate =
+          std::clamp(kEnemySpawnBasePerSecond +
+                         kEnemySpawnPerPlayerPerSecond *
+                             static_cast<double>(alive_players) +
+                         kEnemySpawnWaveGrowthPerSecond * wave_boost,
+                     0.0, 30.0);
+      const double spawn_interval = spawn_rate > 1e-6 ? 1.0 / spawn_rate : 0.0;
+
+      scene.spawn_elapsed += dt_seconds;
+      std::size_t spawned = 0;
+      while (spawn_interval > 0.0 && scene.spawn_elapsed >= spawn_interval &&
+             scene.enemies.size() < kMaxEnemiesAlive &&
+             spawned < kMaxEnemySpawnPerTick) {
+        scene.spawn_elapsed -= spawn_interval;
+        const std::size_t idx =
+            static_cast<std::size_t>(NextRng(&scene.rng_state)) %
+            kEnemyTypes.size();
+        if (spawn_enemy(kEnemyTypes[idx].type_id)) {
+          spawned += 1;
+          has_dirty = true;
+        } else {
+          break;
+        }
+      }
+    }
+
+    const NavGrid nav{scene.nav_cells_x, scene.nav_cells_y, kNavCellSize};
+    const float reach_sq = kEnemyWaypointReachRadius * kEnemyWaypointReachRadius;
+
+    auto nearest_player_id = [&](float x, float y) -> uint32_t {
+      uint32_t best_id = 0;
+      float best_dist_sq = std::numeric_limits<float>::infinity();
+      for (const auto& [pid, pr] : scene.players) {
+        if (!pr.state.is_alive()) {
+          continue;
+        }
+        const float dx = pr.state.position().x() - x;
+        const float dy = pr.state.position().y() - y;
+        const float dist_sq = dx * dx + dy * dy;
+        if (dist_sq < best_dist_sq) {
+          best_dist_sq = dist_sq;
+          best_id = pid;
+        }
+      }
+      return best_id;
+    };
+
+    for (auto& [_, enemy] : scene.enemies) {
+      if (!enemy.state.is_alive()) {
+        continue;
+      }
+
+      auto* pos = enemy.state.mutable_position();
+      const float prev_x = pos->x();
+      const float prev_y = pos->y();
+
+      const uint32_t target_id = nearest_player_id(prev_x, prev_y);
+      if (target_id == 0) {
+        continue;
+      }
+
+      const auto target_it = scene.players.find(target_id);
+      if (target_it == scene.players.end()) {
+        continue;
+      }
+
+      const float target_x = target_it->second.state.position().x();
+      const float target_y = target_it->second.state.position().y();
+
+      const bool target_changed = (enemy.target_player_id != target_id);
+      enemy.replan_elapsed += dt_seconds;
+
+      if (target_changed || enemy.replan_elapsed >= kEnemyReplanIntervalSeconds) {
+        enemy.target_player_id = target_id;
+        enemy.replan_elapsed = 0.0;
+
+        const auto start_cell = WorldToCell(nav, prev_x, prev_y);
+        const auto goal_cell = WorldToCell(nav, target_x, target_y);
+        if (start_cell == goal_cell) {
+          enemy.path.clear();
+          enemy.path_index = 0;
+        } else {
+          std::vector<std::pair<int, int>> new_path;
+          if (FindPathAstar(nav, start_cell, goal_cell, &new_path,
+                            scene.nav_came_from, scene.nav_g_score,
+                            scene.nav_closed) &&
+              new_path.size() > 1) {
+            enemy.path = std::move(new_path);
+            enemy.path_index = 1;  // 跳过起点格
+          } else {
+            enemy.path.clear();
+            enemy.path_index = 0;
+          }
+        }
+      }
+
+      auto select_goal = [&]() -> std::pair<float, float> {
+        if (enemy.path_index < enemy.path.size()) {
+          const auto [cx, cy] = enemy.path[enemy.path_index];
+          const auto [wx, wy] = CellCenterWorld(nav, cx, cy);
+          const auto clamped = ClampToMap(scene.config, wx, wy);
+          return {clamped.x(), clamped.y()};
+        }
+        return {target_x, target_y};
+      };
+
+      std::pair<float, float> goal = select_goal();
+      for (int iter = 0; iter < 4; ++iter) {
+        const float dx = goal.first - prev_x;
+        const float dy = goal.second - prev_y;
+        const float dist_sq = dx * dx + dy * dy;
+        if (enemy.path_index < enemy.path.size() && dist_sq <= reach_sq) {
+          enemy.path_index += 1;
+          goal = select_goal();
+          continue;
+        }
+        break;
+      }
+
+      const float dx = goal.first - prev_x;
+      const float dy = goal.second - prev_y;
+      const float dist_sq = dx * dx + dy * dy;
+      if (dist_sq > 1e-6f) {
+        const float inv_len = 1.0f / std::sqrt(dist_sq);
+        const float dir_x = dx * inv_len;
+        const float dir_y = dy * inv_len;
+
+        const EnemyType* type = FindEnemyType(enemy.state.type_id());
+        if (type == nullptr) {
+          type = &DefaultEnemyType();
+        }
+        const float speed = type->move_speed > 0.0f ? type->move_speed : 60.0f;
+
+        const auto new_pos = ClampToMap(
+            scene.config,
+            prev_x + dir_x * speed * static_cast<float>(dt_seconds),
+            prev_y + dir_y * speed * static_cast<float>(dt_seconds));
+        const float new_x = new_pos.x();
+        const float new_y = new_pos.y();
+        if (std::abs(new_x - prev_x) > 1e-4f || std::abs(new_y - prev_y) > 1e-4f) {
+          pos->set_x(new_x);
+          pos->set_y(new_y);
+          enemy.dirty = true;
+        }
+      }
+
+      if (enemy.dirty || enemy.force_sync_left > 0) {
+        has_dirty = true;
+      }
+    }
+
     scene.tick += 1;
     scene.sync_accumulator += dt_seconds;
     scene.full_sync_elapsed += dt_seconds;
@@ -456,6 +936,14 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
         fill_player_high_freq(runtime, sync.add_players());
         runtime.dirty = false;
       }
+      for (auto& [_, enemy] : scene.enemies) {
+        auto* out = sync.add_enemies();
+        *out = enemy.state;
+        enemy.dirty = false;
+        if (enemy.force_sync_left > 0) {
+          enemy.force_sync_left -= 1;
+        }
+      }
       scene.full_sync_elapsed = 0.0;
     } else {
       for (auto& [_, runtime] : scene.players) {
@@ -465,16 +953,31 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
         fill_player_high_freq(runtime, sync.add_players());
         runtime.dirty = false;
       }
+      for (auto& [_, enemy] : scene.enemies) {
+        if (!enemy.dirty && enemy.force_sync_left == 0) {
+          continue;
+        }
+        auto* out = sync.add_enemies();
+        *out = enemy.state;
+        enemy.dirty = false;
+        if (enemy.force_sync_left > 0) {
+          enemy.force_sync_left -= 1;
+        }
+      }
     }
   }
 
-  if (sync.players_size() == 0) {
+  if (sync.players_size() == 0 && sync.enemies_size() == 0 &&
+      sync.items_size() == 0) {
     return;
   }
 
-  if (udp_server_ != nullptr &&
-      udp_server_->BroadcastState(room_id, sync) > 0) {
-    return;
+  // Full sync 往往包含完整敌人列表，UDP 易发生分片丢包；优先走 TCP（可靠）作为兜底快照。
+  if (!force_full_sync) {
+    if (udp_server_ != nullptr &&
+        udp_server_->BroadcastState(room_id, sync) > 0) {
+      return;
+    }
   }
 
   const auto sessions = RoomManager::Instance().GetRoomSessions(room_id);
