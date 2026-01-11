@@ -119,7 +119,8 @@ public class EnemyView {
         float drawY = displayPosition.y - halfHeight;
         float originX = halfWidth;
         float originY = halfHeight;
-        float scaleX = facingRight ? 1f : -1f;
+        // 素材默认朝向左侧，因此向右移动时需要翻转
+        float scaleX = facingRight ? -1f : 1f;
 
         batch.draw(frame, drawX, drawY, originX, originY,
                 frame.getRegionWidth(), frame.getRegionHeight(), scaleX, 1f, 0f);
