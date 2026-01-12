@@ -25,7 +25,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class Main extends Game {
     private static final Logger log = LoggerFactory.getLogger(Main.class);
     private static final int LOGIN_RESULT_SESSION_TOKEN_FIELD_NUMBER = 4;
-    private static final int PLAYER_INPUT_SESSION_TOKEN_FIELD_NUMBER = 7;
     private Skin skin;
     private TcpClient tcpClient;
     private UdpClient udpClient;
@@ -253,6 +252,7 @@ public class Main extends Game {
             startUdpClientIfNeeded();
             lastUdpSyncTick = -1L;
             lastUdpServerTimeMs = -1L;
+            sendInitialUdpHello();
         } catch (IOException e) {
             log.error("Failed to initialize UDP client", e);
         }
@@ -280,6 +280,9 @@ public class Main extends Game {
         udpClient = null;
     }
 
+    /*
+    将输入发送给服务端
+     */
     public boolean trySendPlayerInput(Message.C2S_PlayerInput input) {
         if (input == null) {
             return false;
@@ -308,6 +311,7 @@ public class Main extends Game {
         requestFullGameStateSync(null);
     }
 
+    //请求全量同步
     public void requestFullGameStateSync(String reason) {
         if (tcpClient == null) {
             return;
@@ -360,6 +364,10 @@ public class Main extends Game {
         if (result == null) {
             return "";
         }
+        String directToken = result.getSessionToken();
+        if (directToken != null && !directToken.isBlank()) {
+            return directToken;
+        }
         UnknownFieldSet unknownFields = result.getUnknownFields();
         if (unknownFields == null) {
             return "";
@@ -382,14 +390,8 @@ public class Main extends Game {
             return input;
         }
 
-        UnknownFieldSet.Field tokenField = UnknownFieldSet.Field.newBuilder()
-                .addLengthDelimited(ByteString.copyFromUtf8(token))
-                .build();
-        UnknownFieldSet extra = UnknownFieldSet.newBuilder()
-                .addField(PLAYER_INPUT_SESSION_TOKEN_FIELD_NUMBER, tokenField)
-                .build();
         return input.toBuilder()
-                .mergeUnknownFields(extra)
+                .setSessionToken(token)
                 .build();
     }
 
@@ -405,6 +407,8 @@ public class Main extends Game {
                         setSessionToken(extractSessionToken(result));
                         if (sessionToken.isBlank()) {
                             log.warn("Login succeeded but server did not provide session_token; UDP input may be rejected");
+                        } else {
+                            log.debug("Received session_token (length={})", sessionToken.length());
                         }
                         // 登录成功，跳转到房间列表
                         setScreen(new RoomListScreen(Main.this, skin));
@@ -515,6 +519,30 @@ public class Main extends Game {
         if (networkThread != null) {
             networkThread.interrupt();
             networkThread = null;
+        }
+    }
+
+    private void sendInitialUdpHello() {
+        if (playerId <= 0) {
+            return;
+        }
+        if (sessionToken == null || sessionToken.isBlank()) {
+            log.debug("Skipping UDP hello because session token is missing");
+            return;
+        }
+        UdpClient client = this.udpClient;
+        if (client == null || !client.isRunning()) {
+            return;
+        }
+        Message.C2S_PlayerInput hello = Message.C2S_PlayerInput.newBuilder()
+                .setPlayerId(playerId)
+                .setDeltaMs(0)
+                .build();
+        Message.C2S_PlayerInput withToken = attachSessionToken(hello, sessionToken);
+        if (client.sendPlayerInput(withToken)) {
+            log.debug("Sent UDP hello to register endpoint (playerId={})", playerId);
+        } else {
+            log.warn("Failed to send UDP hello; UDP sync may be delayed until player input occurs");
         }
     }
 }

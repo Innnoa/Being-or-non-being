@@ -54,7 +54,7 @@ public class GameScreen implements Screen {
     private static final long REMOTE_PLAYER_TIMEOUT_MS = 5000L;
     private static final long MIN_INPUT_SEND_INTERVAL_MS = 10L; // ~100Hz
 
-    /**
+    /*
      * 增量同步,标识服务端传入的变化值,采用位掩码,更方便能看出来需要传入的值是否发生了变化,比如位置信息
      * 而且这个方式是将Message中的字段缓存成变量,解耦代码
      */
@@ -206,7 +206,7 @@ public class GameScreen implements Screen {
             playerIdleAnimation = null;
             pixmap.dispose();
         }
-
+        //加载资源
         loadEnemyAssets();
         enemyViews.clear();
         enemyLastSeen.clear();
@@ -219,24 +219,39 @@ public class GameScreen implements Screen {
     }
 
     @Override
+    /**
+    游戏主循环
+     */
     public void render(float delta) {
-        advanceLogicalClock(delta);
+        advanceLogicalClock(delta);//更新一个稳定的时间跳变
         pumpPendingNetworkInput();
 
+        /*
+        hasReceivedInitialState:游戏初始状态
+        playerTextureRegion:角色纹理
+         */
         if (!hasReceivedInitialState || playerTextureRegion == null) {
             maybeRequestInitialStateResync();
             renderLoadingOverlay();
             return;
         }
-
+        /*
+        采集本地输入
+         */
         float renderDelta = getStableDelta(delta);
         Vector2 dir = getMovementInput();
-        isLocallyMoving = dir.len2() > 0.0001f;
-        boolean attacking = Gdx.input.isKeyJustPressed(Input.Keys.SPACE);
+        isLocallyMoving = dir.len2() > 0.0001f;//判断是否在移动
+        boolean attacking = Gdx.input.isKeyJustPressed(Input.Keys.SPACE);//是否按下空格进行攻击
 
+        /*
+        预测操作
+         */
         simulateLocalStep(dir, renderDelta);
         processInputChunk(dir, attacking, renderDelta);
 
+        /*
+        清屏加相机跟随
+         */
         Gdx.gl.glClearColor(0, 0, 0, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
@@ -246,24 +261,37 @@ public class GameScreen implements Screen {
         camera.position.set(displayPosition.x, displayPosition.y, 0);
         camera.update();
 
+        /*
+        开始渲染
+         */
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         batch.draw(backgroundTexture, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
+        /*
+        播放玩家空闲动画
+         */
         playerAnimationTime += renderDelta;
         TextureRegion currentFrame = playerIdleAnimation != null
-                ? playerIdleAnimation.getKeyFrame(playerAnimationTime, true)
+                ? playerIdleAnimation.getKeyFrame(playerAnimationTime, true)//循环播放
                 : playerTextureRegion;
         if (currentFrame == null) {
             batch.end();
             return;
         }
         playerTextureRegion = currentFrame;
-
+        /*
+        估算服务器时间,计算渲染延迟
+         */
         long estimatedServerTimeMs = estimateServerTimeMs();
         long renderServerTimeMs = estimatedServerTimeMs - computeRenderDelayMs();
+        /*
+        渲染敌人和玩家
+         */
         renderEnemies(renderDelta, renderServerTimeMs);
         renderRemotePlayers(renderServerTimeMs, currentFrame, renderDelta);
+        /*
+        渲染本地玩家角色
+         */
         drawCharacterFrame(currentFrame, displayPosition.x, displayPosition.y, facingRight);
 
         batch.end();
@@ -276,13 +304,23 @@ public class GameScreen implements Screen {
         logicalTimeMs += advance;
     }
 
+    /**
+     * 平滑操作
+     * @param rawDelta
+     * @return
+     */
     private float getStableDelta(float rawDelta) {
-        float clamped = Math.min(rawDelta, MAX_FRAME_DELTA);
-        smoothedFrameDelta += (clamped - smoothedFrameDelta) * DELTA_SMOOTH_ALPHA;
-        logFrameDeltaSpike(rawDelta, smoothedFrameDelta);
+        float clamped = Math.min(rawDelta, MAX_FRAME_DELTA);//设置最大帧间隔防止极大帧
+        smoothedFrameDelta += (clamped - smoothedFrameDelta) * DELTA_SMOOTH_ALPHA;//指数平滑操作,利用IIR低通滤波器
+        logFrameDeltaSpike(rawDelta, smoothedFrameDelta);//日志输出
         return smoothedFrameDelta;
     }
 
+    /**
+     * 预测操作,本地直接用预测进行移动
+     * @param dir
+     * @param delta
+     */
     private void simulateLocalStep(Vector2 dir, float delta) {
         if (dir.len2() > 0.1f) {
             predictedPosition.add(dir.x * PLAYER_SPEED * delta, dir.y * PLAYER_SPEED * delta);
@@ -294,8 +332,15 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * 打包发送玩家输入
+     * @param dir
+     * @param attacking
+     * @param delta
+     */
     private void processInputChunk(Vector2 dir, boolean attacking, float delta) {
-        boolean moving = dir.len2() > 0.0001f;
+        boolean moving = dir.len2() > 0.0001f;//判断是否在移动
+        //未移动未攻击
         if (!moving && !attacking) {
             if (hasPendingInputChunk) {
                 flushPendingInput();
@@ -305,9 +350,9 @@ public class GameScreen implements Screen {
             }
             return;
         }
-
+        //重置空闲标志
         idleAckSent = false;
-
+        //首次操作
         if (!hasPendingInputChunk) {
             startPendingChunk(dir, attacking, delta);
             if (pendingAttack) {
@@ -315,19 +360,25 @@ public class GameScreen implements Screen {
             }
             return;
         }
-
+        //判断是否可合并
         if (pendingMoveDir.epsilonEquals(dir, 0.001f) && pendingAttack == attacking) {
-            pendingInputDuration += delta;
+            pendingInputDuration += delta;//可以,延长持续时间
         } else {
-            flushPendingInput();
-            startPendingChunk(dir, attacking, delta);
+            flushPendingInput();//不可以,结束旧块
+            startPendingChunk(dir, attacking, delta);//开始新块
         }
-
+        //攻击和按键持续时间超过上限
         if (pendingAttack || pendingInputDuration >= MAX_COMMAND_DURATION) {
             flushPendingInput();
         }
     }
 
+    /**
+     * 初始化所需状态
+     * @param dir
+     * @param attacking
+     * @param delta
+     */
     private void startPendingChunk(Vector2 dir, boolean attacking, float delta) {
         pendingMoveDir.set(dir);
         pendingAttack = attacking;
@@ -336,19 +387,27 @@ public class GameScreen implements Screen {
         hasPendingInputChunk = true;
     }
 
+    /**
+     * 将客户端的输入打包发给服务器
+     */
     private void flushPendingInput() {
+        //检查是否有待发送的输入
         if (!hasPendingInputChunk) {
             return;
         }
         float duration = resolvePendingDurationSeconds();
         PlayerInputCommand cmd = new PlayerInputCommand(inputSequence++, pendingMoveDir, pendingAttack, duration);
-        unconfirmedInputs.put(cmd.seq, cmd);
+        unconfirmedInputs.put(cmd.seq, cmd);//存入未确认输入的缓存
         inputSendTimes.put(cmd.seq, logicalTimeMs);
         pruneUnconfirmedInputs();
         sendPlayerInputToServer(cmd);
         resetPendingInputAccumulator();
     }
 
+    /**
+     * 在无输入时向服务器发送心跳
+     * @param delta
+     */
     private void sendIdleCommand(float delta) {
         PlayerInputCommand idleCmd = new PlayerInputCommand(
                 inputSequence++,
@@ -363,11 +422,17 @@ public class GameScreen implements Screen {
         idleAckSent = true;
     }
 
+    /**
+     * 清理未确认队列
+     */
     private void pruneUnconfirmedInputs() {
         if (unconfirmedInputs.isEmpty()) {
             return;
         }
 
+        /*
+        安全迭代删除过期条目
+         */
         long now = logicalTimeMs;
         Iterator<Map.Entry<Integer, PlayerInputCommand>> iterator = unconfirmedInputs.entrySet().iterator();
         boolean removed = false;
@@ -375,6 +440,9 @@ public class GameScreen implements Screen {
             Map.Entry<Integer, PlayerInputCommand> entry = iterator.next();
             int seq = entry.getKey();
             long sentAt = inputSendTimes.getOrDefault(seq, entry.getValue().timestampMs);
+            /*
+            判断是否真的需要删除
+             */
             boolean tooOld = (now - sentAt) > MAX_UNCONFIRMED_INPUT_AGE_MS;
             boolean overflow = unconfirmedInputs.size() > MAX_UNCONFIRMED_INPUTS;
             if (tooOld || overflow) {
@@ -383,11 +451,15 @@ public class GameScreen implements Screen {
                 removed = true;
                 continue;
             }
+            //提前终止遍历
             if (!tooOld && !overflow) {
                 break;
             }
         }
 
+        /*
+        日志与空闲状态处理
+         */
         if (removed) {
             Gdx.app.log(TAG, "Pruned stale inputs, remaining=" + unconfirmedInputs.size());
         }
@@ -396,46 +468,62 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * 渲染其他玩家
+     * @param renderServerTimeMs
+     * @param frame
+     * @param delta
+     */
     private void renderRemotePlayers(long renderServerTimeMs, TextureRegion frame, float delta) {
+        //空检查
         if (frame == null) {
             return;
         }
+        //遍历每个玩家的快照
         for (Map.Entry<Integer, Deque<ServerPlayerSnapshot>> entry : remotePlayerServerSnapshots.entrySet()) {
             int playerId = entry.getKey();
             Deque<ServerPlayerSnapshot> snapshots = entry.getValue();
             if (snapshots == null || snapshots.isEmpty()) {
                 continue;
             }
-
+            //插值区间
             ServerPlayerSnapshot prev = null;
             ServerPlayerSnapshot next = null;
             for (ServerPlayerSnapshot snap : snapshots) {
                 if (snap.serverTimestampMs <= renderServerTimeMs) {
-                    prev = snap;
+                    prev = snap;//最新的旧快照
                 } else {
-                    next = snap;
+                    next = snap;//下一个快照
                     break;
                 }
             }
 
             Vector2 targetPos = renderBuffer;
+            /*
+             插值计算策略
+             */
+            //有上一个和下一个就平滑插中值
             if (prev != null && next != null && next.serverTimestampMs > prev.serverTimestampMs) {
                 float t = (renderServerTimeMs - prev.serverTimestampMs) /
                         (float) (next.serverTimestampMs - prev.serverTimestampMs);
                 t = MathUtils.clamp(t, 0f, 1f);
                 targetPos.set(prev.position).lerp(next.position, t);
-            } else if (prev != null) {
+            }//只有prev就预测一个新值
+            else if (prev != null) {
                 long ahead = Math.max(0L, renderServerTimeMs - prev.serverTimestampMs);
                 long clampedAhead = Math.min(ahead, MAX_EXTRAPOLATION_MS);
                 float seconds = clampedAhead / 1000f;
                 targetPos.set(prev.position).mulAdd(prev.velocity, seconds);
-            } else {
+            }//只有新值就直接用
+            else {
                 targetPos.set(next.position);
             }
             clampPositionToMap(targetPos);
             boolean remoteFacing = remoteFacingRight.getOrDefault(playerId, true);
+            //获取初始化位置缓存
             Vector2 displayPos = remoteDisplayPositions
                     .computeIfAbsent(playerId, id -> new Vector2(targetPos));
+            //平滑过度,属于是保险的保险,防止因包跳跃造成的突变
             float distSq = displayPos.dst2(targetPos);
             if (distSq > REMOTE_DISPLAY_SNAP_DISTANCE * REMOTE_DISPLAY_SNAP_DISTANCE) {
                 displayPos.set(targetPos);
@@ -447,6 +535,11 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * 渲染敌人
+     * @param delta
+     * @param renderServerTimeMs
+     */
     private void renderEnemies(float delta, long renderServerTimeMs) {
         if (batch == null || enemyViews.isEmpty()) {
             return;
@@ -456,6 +549,9 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * 创建一个占位敌人
+     */
     private void spawnPlaceholderEnemy() {
         EnemyView placeholder = new EnemyView(PLACEHOLDER_ENEMY_ID, WORLD_WIDTH, WORLD_HEIGHT);
         placeholder.setVisual(DEFAULT_ENEMY_TYPE_ID,
@@ -500,6 +596,9 @@ public class GameScreen implements Screen {
         return view;
     }
 
+    /**
+     * 加载所有动画资源
+     */
     private void loadEnemyAssets() {
         disposeEnemyAtlases();
         enemyAnimations.clear();
@@ -543,6 +642,10 @@ public class GameScreen implements Screen {
         return animation;
     }
 
+    /**
+     * 懒加载一个敌人材质的占位防止资源丢失
+     * @return
+     */
     private TextureRegion getEnemyFallbackRegion() {
         if (enemyFallbackRegion == null) {
             Pixmap pixmap = new Pixmap(72, 72, Pixmap.Format.RGBA8888);
@@ -562,6 +665,13 @@ public class GameScreen implements Screen {
         enemyAtlasCache.clear();
     }
 
+    /**
+     * 绘制角色
+     * @param frame
+     * @param centerX
+     * @param centerY
+     * @param faceRight
+     */
     private void drawCharacterFrame(TextureRegion frame, float centerX, float centerY, boolean faceRight) {
         if (frame == null) {
             return;
@@ -664,11 +774,17 @@ public class GameScreen implements Screen {
         float offsetSample = serverTimeMs - now;
         clockOffsetMs = MathUtils.lerp(clockOffsetMs, offsetSample, 0.1f);
     }
-
+    /**
+     * 本地时间
+     */
     private long estimateServerTimeMs() {
         return (long) (System.currentTimeMillis() + clockOffsetMs);
     }
 
+    /**
+     * 确保角色不会走出地图
+     * @param position
+     */
     private void clampPositionToMap(Vector2 position) {
         if (playerTextureRegion == null) {
             return;
@@ -681,6 +797,10 @@ public class GameScreen implements Screen {
         position.y = MathUtils.clamp(position.y, halfHeight, WORLD_HEIGHT - halfHeight);
     }
 
+    /**
+     * 获取wasd输入
+     * @return
+     */
     private Vector2 getMovementInput() {
         Vector2 input = new Vector2();
         if (Gdx.input.isKeyPressed(Input.Keys.W)) input.y += 1;
@@ -697,6 +817,10 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * 打包发送
+     * @param cmd
+     */
     private void sendPlayerInputToServer(PlayerInputCommand cmd) {
         if (game.getPlayerId() <= 0) return;
 
@@ -716,6 +840,10 @@ public class GameScreen implements Screen {
         enqueueInputForSend(inputMsg);
     }
 
+    /**
+     * 客户端发送速率限制
+     * @param inputMsg
+     */
     private void enqueueInputForSend(Message.C2S_PlayerInput inputMsg) {
         long now = TimeUtils.millis();
         if ((now - lastInputSendMs) < MIN_INPUT_SEND_INTERVAL_MS) {
@@ -725,6 +853,9 @@ public class GameScreen implements Screen {
         sendInputImmediately(inputMsg, now);
     }
 
+    /**
+    发送代码
+     */
     private void sendInputImmediately(Message.C2S_PlayerInput msg, long timestampMs) {
         if (game.trySendPlayerInput(msg)) {
             lastInputSendMs = timestampMs;
@@ -734,6 +865,9 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+    如果本地输入达到了最小发送间隔就打包发出去
+     */
     private void pumpPendingNetworkInput() {
         if (pendingRateLimitedInput == null) {
             return;
@@ -743,7 +877,7 @@ public class GameScreen implements Screen {
             sendInputImmediately(pendingRateLimitedInput, now);
         }
     }
-
+    //TODO:这里看一下,看增量同步
     public void onGameStateReceived(Message.S2C_GameStateSync sync) {
         long arrivalMs = TimeUtils.millis();
         Message.Timestamp syncTime = sync.hasSyncTime() ? sync.getSyncTime() : null;
@@ -1127,31 +1261,47 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * 位置修正和日志输出
+     * @param delta
+     */
     private void updateDisplayPosition(float delta) {
+        //未初始化则跳过
         if (!hasReceivedInitialState) {
             return;
         }
+        //非本地控制角色就直接同步
         if (!isLocallyMoving) {
             displayPosition.set(predictedPosition);
             return;
         }
+        //小偏差修正
         float distSq = displayPosition.dst2(predictedPosition);
         if (distSq <= DISPLAY_SNAP_DISTANCE * DISPLAY_SNAP_DISTANCE) {
             displayPosition.set(predictedPosition);
             return;
         }
+        //大偏差,报警
         float distance = (float) Math.sqrt(distSq);
         if (distance > DISPLAY_DRIFT_LOG_THRESHOLD) {
             logDisplayDrift(distance);
         }
+        //平滑插值,向预测位置靠拢
         float alpha = MathUtils.clamp(delta * DISPLAY_LERP_RATE, 0f, 1f);
         displayPosition.lerp(predictedPosition, alpha);
     }
 
+    /**
+     * 给予一个稳定的日志输出
+     * @param rawDelta
+     * @param stableDelta
+     */
     private void logFrameDeltaSpike(float rawDelta, float stableDelta) {
+        //只处理超过超时限度的报错
         if (Math.abs(rawDelta - stableDelta) < DELTA_SPIKE_THRESHOLD) {
             return;
         }
+        //给予一个稳定的日志输出频率
         long nowMs = TimeUtils.millis();
         if (nowMs - lastDeltaSpikeLogMs < DELTA_LOG_INTERVAL_MS) {
             return;
@@ -1161,10 +1311,17 @@ public class GameScreen implements Screen {
         lastDeltaSpikeLogMs = nowMs;
     }
 
+    /**
+     * 输出日志,记录服务器位置校正的诊断函数
+     * @param correctionDist
+     * @param lastProcessedSeq
+     */
     private void logServerCorrection(float correctionDist, int lastProcessedSeq) {
+        //过滤微小矫正
         if (correctionDist < POSITION_CORRECTION_LOG_THRESHOLD) {
             return;
         }
+        //获取时间,确保日志发送频率
         long nowMs = TimeUtils.millis();
         if (nowMs - lastCorrectionLogMs < POSITION_LOG_INTERVAL_MS) {
             return;
@@ -1175,10 +1332,16 @@ public class GameScreen implements Screen {
         lastCorrectionLogMs = nowMs;
     }
 
+    /**
+     * 输出日志
+     * @param drift
+     */
     private void logDisplayDrift(float drift) {
+        //防御性编程,二次校验漂移阈值
         if (drift < DISPLAY_DRIFT_LOG_THRESHOLD) {
             return;
         }
+        //获取时间,确保日志发送频率
         long nowMs = TimeUtils.millis();
         if (nowMs - lastDisplayDriftLogMs < DISPLAY_LOG_INTERVAL_MS) {
             return;
@@ -1188,6 +1351,10 @@ public class GameScreen implements Screen {
         lastDisplayDriftLogMs = nowMs;
     }
 
+    /**
+     * 计算本次输入的持续时间
+     * @return
+     */
     private float resolvePendingDurationSeconds() {
         float elapsed = pendingInputDuration;
         if (pendingInputStartMs > 0L) {
@@ -1199,6 +1366,9 @@ public class GameScreen implements Screen {
         return Math.max(elapsed, MIN_COMMAND_DURATION);
     }
 
+    /**
+     * 清理玩家输入并发送给服务器后余下的临时变量减少资源消耗
+     */
     private void resetPendingInputAccumulator() {
         hasPendingInputChunk = false;
         pendingAttack = false;
@@ -1206,6 +1376,9 @@ public class GameScreen implements Screen {
         pendingInputStartMs = 0L;
     }
 
+    /**
+     * 重置客户端状态并发送全量请求
+     */
     private void resetInitialStateTracking() {
         initialStateStartMs = TimeUtils.millis();
         lastInitialStateRequestMs = 0L;
@@ -1227,18 +1400,26 @@ public class GameScreen implements Screen {
         lastDeltaResyncRequestMs = 0L;
     }
 
+    /**
+     * 获取全量信息并附带获取不到的办法
+     */
     private void maybeRequestInitialStateResync() {
+        //再判断一下避免误判,如果这个不是那就是角色纹理没加载好
         if (hasReceivedInitialState) {
             return;
         }
+        //时间戳
         long now = TimeUtils.millis();
+        //如果客户端初始化开始时间还是0就获取一次初始状态
         if (initialStateStartMs == 0L) {
             resetInitialStateTracking();
             return;
         }
+        //固定间隔重试
         if ((now - lastInitialStateRequestMs) >= INITIAL_STATE_REQUEST_INTERVAL_MS) {
             maybeSendInitialStateRequest(now, "retry_interval");
         }
+        //分级重试,从正常重试到需要抛警告到严重警告
         long waitDuration = now - initialStateStartMs;
         if (!initialStateWarningLogged && waitDuration >= INITIAL_STATE_WARNING_MS) {
             Gdx.app.log(TAG, "Still waiting for first GameStateSync, waitMs=" + waitDuration);
@@ -1253,6 +1434,7 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**请求客户端再一次发起全量同步,记录请求次数如果次数过多也会取消重试*/
     private void maybeSendInitialStateRequest(long timestampMs, String reason) {
         initialStateRequestCount++;
         if (game != null) {
@@ -1262,6 +1444,9 @@ public class GameScreen implements Screen {
         lastInitialStateRequestMs = timestampMs;
     }
 
+    /**
+     * 在游戏初始资源没加载成功的时候加载一个初始界面
+     */
     private void renderLoadingOverlay() {
         Gdx.gl.glClearColor(0.06f, 0.06f, 0.08f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
