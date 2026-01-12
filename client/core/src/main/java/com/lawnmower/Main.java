@@ -37,6 +37,7 @@ public class Main extends Game {
     private long lastUdpServerTimeMs = -1L;
 
     private final AtomicBoolean networkRunning = new AtomicBoolean(false);
+    private final AtomicBoolean disposed = new AtomicBoolean(false);
     private Thread networkThread;
 
     @Override
@@ -479,6 +480,24 @@ public class Main extends Game {
 
     @Override
     public void dispose() {
+        if (!disposed.compareAndSet(false, true)) {
+            return;
+        }
+
+        shutdownNetworking();
+
+        if (skin != null) skin.dispose();
+        super.dispose();
+    }
+
+    public void requestExit() {
+        shutdownNetworking();
+        if (Gdx.app != null) {
+            Gdx.app.postRunnable(() -> Gdx.app.exit());
+        }
+    }
+
+    private void shutdownNetworking() {
         networkRunning.set(false);
 
         if (tcpClient != null) {
@@ -486,6 +505,8 @@ public class Main extends Game {
                 tcpClient.close();
             } catch (IOException e) {
                 log.warn("Error closing TCP client", e);
+            } finally {
+                tcpClient = null;
             }
         }
 
@@ -495,8 +516,5 @@ public class Main extends Game {
             networkThread.interrupt();
             networkThread = null;
         }
-
-        if (skin != null) skin.dispose();
-        super.dispose();
     }
 }

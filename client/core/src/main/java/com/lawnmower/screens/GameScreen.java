@@ -54,6 +54,10 @@ public class GameScreen implements Screen {
     private static final long REMOTE_PLAYER_TIMEOUT_MS = 5000L;
     private static final long MIN_INPUT_SEND_INTERVAL_MS = 10L; // ~100Hz
 
+    /**
+     * 增量同步,标识服务端传入的变化值,采用位掩码,更方便能看出来需要传入的值是否发生了变化,比如位置信息
+     * 而且这个方式是将Message中的字段缓存成变量,解耦代码
+     */
     private static final int PLAYER_DELTA_POSITION_MASK = Message.PlayerDeltaMask.PLAYER_DELTA_POSITION_VALUE;
     private static final int PLAYER_DELTA_ROTATION_MASK = Message.PlayerDeltaMask.PLAYER_DELTA_ROTATION_VALUE;
     private static final int PLAYER_DELTA_IS_ALIVE_MASK = Message.PlayerDeltaMask.PLAYER_DELTA_IS_ALIVE_VALUE;
@@ -172,21 +176,23 @@ public class GameScreen implements Screen {
     public void show() {
         camera = new OrthographicCamera();
         viewport = new FitViewport(WORLD_WIDTH, WORLD_HEIGHT, camera);
-        batch = new SpriteBatch();
-        loadingFont = new BitmapFont();
-        loadingFont.getData().setScale(1.3f);
-        loadingLayout = new GlyphLayout();
+        batch = new SpriteBatch();//绘制人物用的
+        loadingFont = new BitmapFont();//绘制字体
+        loadingFont.getData().setScale(1.3f);//字体放大1.3倍
+        loadingLayout = new GlyphLayout();//布局文本,是一种比较高级的布局
 
+        //背景
         try {
             backgroundTexture = new Texture(Gdx.files.internal("background/roomListBackground.png"));
         } catch (Exception e) {
-            Pixmap bgPixmap = new Pixmap((int) WORLD_WIDTH, (int) WORLD_HEIGHT, Pixmap.Format.RGBA8888);
+            Pixmap bgPixmap = new Pixmap((int) WORLD_WIDTH, (int) WORLD_HEIGHT, Pixmap.Format.RGBA8888);//设置纯色图
             bgPixmap.setColor(0.05f, 0.15f, 0.05f, 1f);
             bgPixmap.fill();
             backgroundTexture = new Texture(bgPixmap);
             bgPixmap.dispose();
         }
 
+        //人物
         try {
             playerAtlas = new TextureAtlas(Gdx.files.internal("Plants/PeaShooter/Standby/standby.atlas"));
             playerIdleAnimation = new Animation<>(0.1f, playerAtlas.getRegions(), Animation.PlayMode.LOOP);
@@ -206,6 +212,7 @@ public class GameScreen implements Screen {
         enemyLastSeen.clear();
         spawnPlaceholderEnemy();
 
+        //设置人物初始位置为地图中央
         predictedPosition.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
         displayPosition.set(predictedPosition);
         resetInitialStateTracking();

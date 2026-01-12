@@ -2,6 +2,7 @@ package com.lawnmower.desktop;
 
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration;
+import com.badlogic.gdx.backends.lwjgl3.Lwjgl3WindowAdapter;
 import com.lawnmower.Main;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,12 +17,21 @@ public class DesktopLauncher {
 
     public static void main(String[] args) {
         forceUtf8Console();
+        Main game = new Main();
         Lwjgl3ApplicationConfiguration config = new Lwjgl3ApplicationConfiguration();
         config.setTitle("植物大战僵尸-ROGUELIKE");
         config.setWindowedMode(1000, 563);
         config.setForegroundFPS(60);
+        config.setWindowListener(new Lwjgl3WindowAdapter() {
+            @Override
+            public boolean closeRequested() {
+                game.requestExit();
+                return true;
+            }
+        });
+        Runtime.getRuntime().addShutdownHook(new Thread(game::requestExit, "lawnmower-shutdown"));
 
-        new Lwjgl3Application(new Main(), config);
+        new Lwjgl3Application(game, config);
     }
 
     private static void forceUtf8Console() {
