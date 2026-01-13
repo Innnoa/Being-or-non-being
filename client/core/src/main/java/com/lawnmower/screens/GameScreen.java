@@ -68,6 +68,7 @@ public class GameScreen implements Screen {
     private static final int ENEMY_DELTA_IS_ALIVE_MASK = Message.EnemyDeltaMask.ENEMY_DELTA_IS_ALIVE_VALUE;
 
     private final Vector2 renderBuffer = new Vector2();
+    private final Vector2 projectileTempVector = new Vector2();
     private final Map<Integer, Message.PlayerState> serverPlayerStates = new HashMap<>();
     private final Map<Integer, Message.EnemyState> enemyStateCache = new HashMap<>();
     private final Map<Integer, EnemyView> enemyViews = new HashMap<>();
@@ -79,6 +80,8 @@ public class GameScreen implements Screen {
     private final Map<Integer, PlayerInputCommand> unconfirmedInputs = new LinkedHashMap<>();
     private final Map<Integer, Long> inputSendTimes = new HashMap<>();
     private final Queue<PlayerStateSnapshot> snapshotHistory = new ArrayDeque<>();
+    private final Map<Long, ProjectileView> projectileViews = new HashMap<>();
+    private final Array<ProjectileImpact> projectileImpacts = new Array<>();
 
     private Main game;
     private OrthographicCamera camera;
@@ -93,6 +96,12 @@ public class GameScreen implements Screen {
     private final Map<String, TextureAtlas> enemyAtlasCache = new HashMap<>();
     private Texture enemyFallbackTexture;
     private TextureRegion enemyFallbackRegion;
+    private TextureAtlas projectileAtlas;
+    private Animation<TextureRegion> projectileAnimation;
+    private Texture projectileFallbackTexture;
+    private TextureRegion projectileFallbackRegion;
+    private TextureAtlas projectileImpactAtlas;
+    private Animation<TextureRegion> projectileImpactAnimation;
     private float playerAnimationTime = 0f;
     private BitmapFont loadingFont;
     private GlyphLayout loadingLayout;
@@ -167,6 +176,9 @@ public class GameScreen implements Screen {
     private float smoothedSyncDeviationMs = 30f;
     private Message.C2S_PlayerInput pendingRateLimitedInput;
     private long lastInputSendMs = 0L;
+    private String statusToastMessage = "";
+    private float statusToastTimer = 0f;
+    private static final float STATUS_TOAST_DURATION = 2.75f;
 
     public GameScreen(Main game) {
         this.game = Objects.requireNonNull(game);
@@ -208,8 +220,11 @@ public class GameScreen implements Screen {
         }
         //加载资源
         loadEnemyAssets();
+        loadProjectileAssets();
         enemyViews.clear();
         enemyLastSeen.clear();
+        projectileViews.clear();
+        projectileImpacts.clear();
         spawnPlaceholderEnemy();
 
         //设置人物初始位置为地图中央
@@ -284,15 +299,19 @@ public class GameScreen implements Screen {
          */
         long estimatedServerTimeMs = estimateServerTimeMs();
         long renderServerTimeMs = estimatedServerTimeMs - computeRenderDelayMs();
+        updateProjectiles(renderDelta, renderServerTimeMs);
         /*
         渲染敌人和玩家
          */
         renderEnemies(renderDelta, renderServerTimeMs);
         renderRemotePlayers(renderServerTimeMs, currentFrame, renderDelta);
+        renderProjectiles();
+        renderProjectileImpacts(renderDelta);
         /*
         渲染本地玩家角色
          */
         drawCharacterFrame(currentFrame, displayPosition.x, displayPosition.y, facingRight);
+        renderStatusToast(renderDelta);
 
         batch.end();
     }
@@ -553,6 +572,133 @@ public class GameScreen implements Screen {
         }
     }
 
+    private void updateProjectiles(float delta, long serverTimeMs) {
+        if (projectileViews.isEmpty()) {
+            return;
+        }
+        Iterator<Map.Entry<Long, ProjectileView>> iterator = projectileViews.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<Long, ProjectileView> entry = iterator.next();
+            ProjectileView view = entry.getValue();
+            view.animationTime += delta;
+            view.position.mulAdd(view.velocity, delta);
+            boolean expired = view.expireServerTimeMs > 0 && serverTimeMs >= view.expireServerTimeMs;
+            if (expired || isProjectileOutOfBounds(view.position)) {
+                iterator.remove();
+            }
+        }
+    }
+
+    private void renderProjectiles() {
+        if (projectileViews.isEmpty() || batch == null) {
+            return;
+        }
+        for (ProjectileView view : projectileViews.values()) {
+            TextureRegion frame = resolveProjectileFrame(view);
+            if (frame == null) {
+                continue;
+            }
+            float width = frame.getRegionWidth();
+            float height = frame.getRegionHeight();
+            float drawX = view.position.x - width / 2f;
+            float drawY = view.position.y - height / 2f;
+            float originX = width / 2f;
+            float originY = height / 2f;
+            batch.draw(frame, drawX, drawY, originX, originY, width, height,
+                    1f, 1f, view.rotationDeg);
+        }
+    }
+
+    private void renderProjectileImpacts(float delta) {
+        if (projectileImpacts.isEmpty() || batch == null) {
+            return;
+        }
+        if (projectileImpactAnimation == null) {
+            projectileImpacts.clear();
+            return;
+        }
+        for (int i = projectileImpacts.size - 1; i >= 0; i--) {
+            ProjectileImpact impact = projectileImpacts.get(i);
+            impact.elapsed += delta;
+            TextureRegion frame = projectileImpactAnimation.getKeyFrame(impact.elapsed, false);
+            if (frame == null || projectileImpactAnimation.isAnimationFinished(impact.elapsed)) {
+                projectileImpacts.removeIndex(i);
+                continue;
+            }
+            float width = frame.getRegionWidth();
+            float height = frame.getRegionHeight();
+            float drawX = impact.position.x - width / 2f;
+            float drawY = impact.position.y - height / 2f;
+            float originX = width / 2f;
+            float originY = height / 2f;
+            batch.draw(frame, drawX, drawY, originX, originY, width, height, 1f, 1f, 0f);
+        }
+    }
+
+    private TextureRegion resolveProjectileFrame(ProjectileView view) {
+        if (projectileAnimation != null) {
+            return projectileAnimation.getKeyFrame(view.animationTime, true);
+        }
+        return projectileFallbackRegion;
+    }
+
+    private boolean isProjectileOutOfBounds(Vector2 position) {
+        float margin = 32f;
+        return position.x < -margin || position.x > WORLD_WIDTH + margin
+                || position.y < -margin || position.y > WORLD_HEIGHT + margin;
+    }
+
+    private void spawnImpactEffect(Vector2 position) {
+        if (projectileImpactAnimation == null || position == null) {
+            return;
+        }
+        ProjectileImpact impact = new ProjectileImpact();
+        impact.position.set(position);
+        projectileImpacts.add(impact);
+    }
+
+    private void renderStatusToast(float delta) {
+        if (statusToastTimer > 0f) {
+            statusToastTimer -= delta;
+        }
+        if (statusToastTimer <= 0f || loadingFont == null || statusToastMessage == null
+                || statusToastMessage.isBlank() || batch == null) {
+            return;
+        }
+        loadingFont.setColor(Color.WHITE);
+        float padding = 20f;
+        float drawX = camera.position.x - WORLD_WIDTH / 2f + padding;
+        float drawY = camera.position.y + WORLD_HEIGHT / 2f - padding;
+        loadingFont.draw(batch, statusToastMessage, drawX, drawY);
+    }
+
+    private void showStatusToast(String message) {
+        if (message == null || message.isBlank()) {
+            return;
+        }
+        statusToastMessage = message;
+        statusToastTimer = STATUS_TOAST_DURATION;
+    }
+
+    private static final class ProjectileView {
+        final long projectileId;
+        final Vector2 position = new Vector2();
+        final Vector2 velocity = new Vector2();
+        float rotationDeg;
+        float animationTime;
+        long spawnServerTimeMs;
+        long expireServerTimeMs;
+
+        ProjectileView(long projectileId) {
+            this.projectileId = projectileId;
+        }
+    }
+
+    private static final class ProjectileImpact {
+        final Vector2 position = new Vector2();
+        float elapsed;
+    }
+
     /**
      * 创建一个占位敌人
      */
@@ -699,6 +845,68 @@ public class GameScreen implements Screen {
             atlas.dispose();
         }
         enemyAtlasCache.clear();
+    }
+
+    private void loadProjectileAssets() {
+        disposeProjectileAssets();
+        try {
+            projectileAtlas = new TextureAtlas(Gdx.files.internal("Plants/PeaShooter/Pea/pea.atlas"));
+            Array<TextureAtlas.AtlasRegion> regions = projectileAtlas.getRegions();
+            if (regions != null && regions.size > 0) {
+                projectileAnimation = new Animation<>(0.04f, regions, Animation.PlayMode.LOOP);
+            } else {
+                projectileAnimation = null;
+            }
+        } catch (Exception e) {
+            projectileAtlas = null;
+            projectileAnimation = null;
+            Gdx.app.log(TAG, "Failed to load projectile atlas", e);
+        }
+
+        if (projectileAnimation == null && projectileFallbackRegion == null) {
+            createProjectileFallbackTexture();
+        }
+
+        try {
+            projectileImpactAtlas = new TextureAtlas(Gdx.files.internal("Zombie/NormalZombie/Attack/attack.atlas"));
+            Array<TextureAtlas.AtlasRegion> regions = projectileImpactAtlas.getRegions();
+            if (regions != null && regions.size > 0) {
+                projectileImpactAnimation = new Animation<>(0.05f, regions, Animation.PlayMode.NORMAL);
+            } else {
+                projectileImpactAnimation = null;
+            }
+        } catch (Exception e) {
+            projectileImpactAtlas = null;
+            projectileImpactAnimation = null;
+            Gdx.app.log(TAG, "Failed to load projectile impact atlas", e);
+        }
+    }
+
+    private void createProjectileFallbackTexture() {
+        Pixmap pixmap = new Pixmap(16, 16, Pixmap.Format.RGBA8888);
+        pixmap.setColor(Color.CHARTREUSE);
+        pixmap.fillCircle(8, 8, 7);
+        projectileFallbackTexture = new Texture(pixmap);
+        projectileFallbackRegion = new TextureRegion(projectileFallbackTexture);
+        pixmap.dispose();
+    }
+
+    private void disposeProjectileAssets() {
+        if (projectileAtlas != null) {
+            projectileAtlas.dispose();
+            projectileAtlas = null;
+        }
+        if (projectileImpactAtlas != null) {
+            projectileImpactAtlas.dispose();
+            projectileImpactAtlas = null;
+        }
+        if (projectileFallbackTexture != null) {
+            projectileFallbackTexture.dispose();
+            projectileFallbackTexture = null;
+            projectileFallbackRegion = null;
+        }
+        projectileAnimation = null;
+        projectileImpactAnimation = null;
     }
 
     /**
@@ -879,6 +1087,13 @@ public class GameScreen implements Screen {
 
         position.x = MathUtils.clamp(position.x, halfWidth, WORLD_WIDTH - halfWidth);
         position.y = MathUtils.clamp(position.y, halfHeight, WORLD_HEIGHT - halfHeight);
+    }
+
+    private static void setVectorFromProto(Message.Vector2 source, Vector2 target) {
+        if (source == null || target == null) {
+            return;
+        }
+        target.set(source.getX(), source.getY());
     }
 
     /**
@@ -1382,6 +1597,131 @@ public class GameScreen implements Screen {
         game.requestFullGameStateSync("delta:" + reason);
     }
 
+    private void handleProjectileSpawnEvent(Message.S2C_ProjectileSpawn spawn) {
+        if (spawn == null || spawn.getProjectilesCount() == 0) {
+            return;
+        }
+        long serverTimeMs = spawn.getServerTimeMs();
+        if (serverTimeMs == 0L) {
+            serverTimeMs = estimateServerTimeMs();
+        }
+        for (Message.ProjectileState state : spawn.getProjectilesList()) {
+            if (state == null) {
+                continue;
+            }
+            long projectileId = Integer.toUnsignedLong(state.getProjectileId());
+            ProjectileView view = new ProjectileView(projectileId);
+            if (state.hasPosition()) {
+                setVectorFromProto(state.getPosition(), view.position);
+            }
+            float rotationDeg = state.getRotation();
+            view.rotationDeg = rotationDeg;
+            float speed = state.hasProjectile() ? state.getProjectile().getSpeed() : 0f;
+            float dirX = MathUtils.cosDeg(rotationDeg);
+            float dirY = MathUtils.sinDeg(rotationDeg);
+            if (Math.abs(dirX) > 0.001f || Math.abs(dirY) > 0.001f) {
+                view.velocity.set(dirX, dirY).nor().scl(speed);
+            } else {
+                view.velocity.setZero();
+            }
+            long ttlMs = Math.max(50L, state.getTtlMs());
+            view.spawnServerTimeMs = serverTimeMs;
+            view.expireServerTimeMs = serverTimeMs + ttlMs;
+            projectileViews.put(projectileId, view);
+        }
+    }
+
+    private void handleProjectileDespawnEvent(Message.S2C_ProjectileDespawn despawn) {
+        if (despawn == null || despawn.getProjectilesCount() == 0) {
+            return;
+        }
+        for (Message.ProjectileDespawn entry : despawn.getProjectilesList()) {
+            if (entry == null) {
+                continue;
+            }
+            long projectileId = Integer.toUnsignedLong(entry.getProjectileId());
+            ProjectileView removed = projectileViews.remove(projectileId);
+            boolean isHit = entry.getReason() == Message.ProjectileDespawnReason.PROJECTILE_DESPAWN_HIT;
+            if (!isHit) {
+                continue;
+            }
+            if (entry.hasPosition()) {
+                projectileTempVector.set(entry.getPosition().getX(), entry.getPosition().getY());
+                spawnImpactEffect(projectileTempVector);
+            } else if (removed != null) {
+                spawnImpactEffect(removed.position);
+            }
+        }
+    }
+
+    private void handlePlayerHurt(Message.S2C_PlayerHurt hurt) {
+        if (hurt == null) {
+            return;
+        }
+        int playerId = (int) hurt.getPlayerId();
+        Message.PlayerState base = serverPlayerStates.get(playerId);
+        if (base != null) {
+            Message.PlayerState.Builder builder = base.toBuilder();
+            builder.setHealth(hurt.getRemainingHealth());
+            serverPlayerStates.put(playerId, builder.build());
+        }
+        String toast = playerId == game.getPlayerId()
+                ? "你受到 " + hurt.getDamage() + " 点伤害，剩余 " + hurt.getRemainingHealth()
+                : "玩家 " + playerId + " 受到 " + hurt.getDamage() + " 伤害";
+        showStatusToast(toast);
+    }
+
+    private void handleEnemyDied(Message.S2C_EnemyDied died) {
+        if (died == null) {
+            return;
+        }
+        int enemyId = (int) died.getEnemyId();
+        enemyStateCache.remove(enemyId);
+        enemyViews.remove(enemyId);
+        if (died.hasPosition()) {
+            projectileTempVector.set(died.getPosition().getX(), died.getPosition().getY());
+            spawnImpactEffect(projectileTempVector);
+        }
+        String toast = died.getKillerPlayerId() > 0
+                ? "敌人被玩家 " + died.getKillerPlayerId() + " 击败"
+                : "敌人 " + enemyId + " 被消灭";
+        showStatusToast(toast);
+    }
+
+    private void handlePlayerLevelUp(Message.S2C_PlayerLevelUp levelUp) {
+        if (levelUp == null) {
+            return;
+        }
+        int playerId = (int) levelUp.getPlayerId();
+        Message.PlayerState base = serverPlayerStates.get(playerId);
+        if (base != null) {
+            Message.PlayerState.Builder builder = base.toBuilder();
+            builder.setLevel(levelUp.getNewLevel());
+            builder.setExpToNext(levelUp.getExpToNext());
+            serverPlayerStates.put(playerId, builder.build());
+        }
+        String toast = playerId == game.getPlayerId()
+                ? "你升级到 Lv." + levelUp.getNewLevel()
+                : "玩家 " + playerId + " 升级到 Lv." + levelUp.getNewLevel();
+        showStatusToast(toast);
+    }
+
+    private void handleDroppedItem(Message.S2C_DroppedItem droppedItem) {
+        if (droppedItem == null || droppedItem.getItemsCount() == 0) {
+            return;
+        }
+        showStatusToast("掉落了 " + droppedItem.getItemsCount() + " 个道具");
+    }
+
+    private void handleGameOver(Message.S2C_GameOver gameOver) {
+        if (gameOver == null) {
+            showStatusToast("游戏结束");
+        } else {
+            showStatusToast(gameOver.getVictory() ? "战斗胜利！" : "战斗失败");
+        }
+        projectileViews.clear();
+        projectileImpacts.clear();
+    }
     /**
      * 游戏环境状态的枚举判断
      * @param type
@@ -1390,21 +1730,25 @@ public class GameScreen implements Screen {
     public void onGameEvent(Message.MessageType type, Object message) {
         switch (type) {
             case MSG_S2C_PLAYER_HURT:
-                Message.S2C_PlayerHurt hurt = (Message.S2C_PlayerHurt) message;
-                Gdx.app.log("GameEvent", "Player " + hurt.getPlayerId() + " hurt, HP: " + hurt.getRemainingHealth());
+                handlePlayerHurt((Message.S2C_PlayerHurt) message);
                 break;
             case MSG_S2C_ENEMY_DIED:
-                Message.S2C_EnemyDied died = (Message.S2C_EnemyDied) message;
-                Gdx.app.log("GameEvent", "Enemy " + died.getEnemyId() + " died at (" + died.getPosition().getX() + ", " +
-                        died.getPosition().getY() + ")");
+                handleEnemyDied((Message.S2C_EnemyDied) message);
                 break;
             case MSG_S2C_PLAYER_LEVEL_UP:
-                Message.S2C_PlayerLevelUp levelUp = (Message.S2C_PlayerLevelUp) message;
-                Gdx.app.log("GameEvent", "Player " + levelUp.getPlayerId() + " leveled up to " +
-                        levelUp.getNewLevel());
+                handlePlayerLevelUp((Message.S2C_PlayerLevelUp) message);
+                break;
+            case MSG_S2C_DROPPED_ITEM:
+                handleDroppedItem((Message.S2C_DroppedItem) message);
                 break;
             case MSG_S2C_GAME_OVER:
-                Gdx.app.log("GameEvent", "Game Over!");
+                handleGameOver((Message.S2C_GameOver) message);
+                break;
+            case MSG_S2C_PROJECTILE_SPAWN:
+                handleProjectileSpawnEvent((Message.S2C_ProjectileSpawn) message);
+                break;
+            case MSG_S2C_PROJECTILE_DESPAWN:
+                handleProjectileDespawnEvent((Message.S2C_ProjectileDespawn) message);
                 break;
             default:
                 Gdx.app.log("GameEvent", "Unhandled game event: " + type);
@@ -1431,6 +1775,7 @@ public class GameScreen implements Screen {
         if (playerTexture != null) playerTexture.dispose();
         if (playerAtlas != null) playerAtlas.dispose();
         disposeEnemyAtlases();
+        disposeProjectileAssets();
         enemyAnimations.clear();
         if (enemyFallbackTexture != null) {
             enemyFallbackTexture.dispose();
@@ -1438,6 +1783,8 @@ public class GameScreen implements Screen {
             enemyFallbackRegion = null;
         }
         enemyViews.clear();
+        projectileViews.clear();
+        projectileImpacts.clear();
         if (backgroundTexture != null) backgroundTexture.dispose();
         if (loadingFont != null) {
             loadingFont.dispose();

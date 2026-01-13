@@ -13,8 +13,8 @@ import com.lawnmower.screens.GameScreen;
 import com.lawnmower.screens.MainMenuScreen;
 import com.lawnmower.screens.RoomListScreen;
 import com.lawnmower.ui.PvzSkin;
-import lawnmower.Message;
 
+import lawnmower.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -109,6 +109,12 @@ public class Main extends Game {
                             break;
                         case MSG_S2C_GAME_OVER:
                             payload = Message.S2C_GameOver.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_PROJECTILE_SPAWN:
+                            payload = Message.S2C_ProjectileSpawn.parseFrom(packet.getPayload());
+                            break;
+                        case MSG_S2C_PROJECTILE_DESPAWN:
+                            payload = Message.S2C_ProjectileDespawn.parseFrom(packet.getPayload());
                             break;
                         // 其他未来消息可继续添加
                         default:
@@ -209,6 +215,10 @@ public class Main extends Game {
                 return Message.S2C_GameOver.parseFrom(packet.getPayload());
             case MSG_S2C_SET_READY_RESULT:
                 return Message.S2C_SetReadyResult.parseFrom(packet.getPayload());
+            case MSG_S2C_PROJECTILE_SPAWN:
+                return Message.S2C_ProjectileSpawn.parseFrom(packet.getPayload());
+            case MSG_S2C_PROJECTILE_DESPAWN:
+                return Message.S2C_ProjectileDespawn.parseFrom(packet.getPayload());
             default:
                 Gdx.app.log("NET", "Unknown message type: " + type);
                 return null;
@@ -495,6 +505,8 @@ public class Main extends Game {
                 case MSG_S2C_PLAYER_LEVEL_UP:
                 case MSG_S2C_DROPPED_ITEM:
                 case MSG_S2C_GAME_OVER:
+                case MSG_S2C_PROJECTILE_SPAWN:
+                case MSG_S2C_PROJECTILE_DESPAWN:
                     // 暂时只打日志，后续由 GameScreen 处理
                     Gdx.app.log("GAME_EVENT", "Received game event: " + type);
                     if (getScreen() instanceof GameScreen gameScreen) {

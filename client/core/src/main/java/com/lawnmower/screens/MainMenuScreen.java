@@ -16,6 +16,7 @@ import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Scaling;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
 import com.lawnmower.Main;
+import lawnmower.Message;
 
 
 import java.util.UUID;
