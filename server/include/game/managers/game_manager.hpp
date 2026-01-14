@@ -137,6 +137,8 @@ class GameManager {
     std::shared_ptr<asio::steady_timer> loop_timer;
   };
 
+  static constexpr int kNavCellSize = 100;          // px
+  static constexpr float kEnemySpawnInset = 10.0f;  // 避免精确落在边界导致 clamp 抖动
   static constexpr uint32_t kEnemySpawnForceSyncCount =
       6;  // 新刷怪多发几次，降低 UDP 丢包影响
   static uint32_t NextRng(uint32_t* state);
@@ -144,6 +146,7 @@ class GameManager {
 
   SceneConfig BuildDefaultConfig() const;
   void PlacePlayers(const RoomManager::RoomSnapshot& snapshot, Scene* scene);
+  void ProcessEnemies(Scene& scene, double dt_seconds, bool* has_dirty);
   void ProcessSceneTick(uint32_t room_id, double tick_interval_seconds);
   void ProcessCombatAndProjectiles(
       Scene& scene, double dt_seconds,
