@@ -12,12 +12,12 @@
 #include "network/udp/udp_server.hpp"
 
 namespace {
-constexpr float kSpawnRadius = 120.0f;
-constexpr int32_t kDefaultMaxHealth = 100;
-constexpr uint32_t kDefaultAttack = 10;
-constexpr uint32_t kDefaultExpToNext = 100;
-constexpr std::size_t kMaxPendingInputs = 64;
-constexpr float kDirectionEpsilonSq = 1e-6f;
+constexpr float kSpawnRadius = 120.0f; // 生成半径
+constexpr int32_t kDefaultMaxHealth = 100000000; // 默认最大血量
+constexpr uint32_t kDefaultAttack = 10; // 默认攻击力
+constexpr uint32_t kDefaultExpToNext = 100; // 默认升级所需经验
+constexpr std::size_t kMaxPendingInputs = 64; // 
+constexpr float kDirectionEpsilonSq = 1e-6f; // 
 constexpr float kMaxDirectionLengthSq = 1.21f;    // 略放宽，防止浮点误差
 constexpr uint32_t kFullSyncIntervalTicks = 180;  // ~3s @60Hz
 
