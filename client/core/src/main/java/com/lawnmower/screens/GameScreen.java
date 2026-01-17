@@ -605,7 +605,13 @@ public class GameScreen implements Screen {
             view.animationTime += delta;
             view.position.mulAdd(view.velocity, delta);
             boolean expired = view.expireServerTimeMs > 0 && serverTimeMs >= view.expireServerTimeMs;
-            if (expired || isProjectileOutOfBounds(view.position)) {
+            boolean outOfBounds = isProjectileOutOfBounds(view.position);
+            if (expired || outOfBounds) {
+                String reason = expired ? "expired" : "out_of_bounds";
+                Gdx.app.log(TAG, "ProjectileRemoved id=" + view.projectileId
+                        + " reason=" + reason
+                        + " pos=" + view.position
+                        + " serverTime=" + serverTimeMs);
                 iterator.remove();
             }
         }
@@ -1694,6 +1700,7 @@ public class GameScreen implements Screen {
         if (serverTimeMs == 0L) {
             serverTimeMs = estimateServerTimeMs();
         }
+        int spawned = 0;
         for (Message.ProjectileState state : spawn.getProjectilesList()) {
             if (state == null) {
                 continue;
@@ -1723,6 +1730,19 @@ public class GameScreen implements Screen {
             view.spawnServerTimeMs = serverTimeMs;
             view.expireServerTimeMs = serverTimeMs + ttlMs;
             projectileViews.put(projectileId, view);
+            spawned++;
+            Gdx.app.log(TAG, "ProjectileSpawn id=" + projectileId
+                    + " pos=" + view.position
+                    + " vel=" + view.velocity
+                    + " speed=" + speed
+                    + " ttlMs=" + ttlMs
+                    + " serverTime=" + serverTimeMs);
+            if (view.velocity.isZero(0.0001f)) {
+                Gdx.app.log(TAG, "Projectile " + projectileId + " has zero velocity; check lock direction.");
+            }
+        }
+        if (spawned > 0) {
+            Gdx.app.log(TAG, "Spawn batch=" + spawned + ", activeProjectiles=" + projectileViews.size());
         }
     }
 
