@@ -920,17 +920,19 @@ public class GameScreen implements Screen {
      */
     private void loadProjectileAssets() {
         disposeProjectileAssets();
+        Array<TextureAtlas.AtlasRegion> projectileRegions = null;
         try {
             projectileAtlas = new TextureAtlas(Gdx.files.internal("Plants/PeaShooter/Pea/pea.atlas"));
-            Array<TextureAtlas.AtlasRegion> regions = projectileAtlas.getRegions();
-            if (regions != null && regions.size > 0) {
-                projectileAnimation = new Animation<>(0.04f, regions, Animation.PlayMode.LOOP);
+            projectileRegions = projectileAtlas.getRegions();
+            if (projectileRegions != null && projectileRegions.size > 0) {
+                projectileAnimation = new Animation<>(0.04f, projectileRegions, Animation.PlayMode.LOOP);
             } else {
                 projectileAnimation = null;
             }
         } catch (Exception e) {
             projectileAtlas = null;
             projectileAnimation = null;
+            projectileRegions = null;
             Gdx.app.log(TAG, "Failed to load projectile atlas", e);
         }
 
@@ -938,18 +940,14 @@ public class GameScreen implements Screen {
             createProjectileFallbackTexture();
         }
 
-        try {
-            projectileImpactAtlas = new TextureAtlas(Gdx.files.internal("Zombie/NormalZombie/Attack/attack.atlas"));
-            Array<TextureAtlas.AtlasRegion> regions = projectileImpactAtlas.getRegions();
-            if (regions != null && regions.size > 0) {
-                projectileImpactAnimation = new Animation<>(0.05f, regions, Animation.PlayMode.NORMAL);
-            } else {
-                projectileImpactAnimation = null;
-            }
-        } catch (Exception e) {
+        if (projectileRegions != null && projectileRegions.size > 0) {
+            projectileImpactAtlas = projectileAtlas;
+            projectileImpactAnimation = new Animation<>(0.05f,
+                    new Array<>(projectileRegions),
+                    Animation.PlayMode.NORMAL);
+        } else {
             projectileImpactAtlas = null;
             projectileImpactAnimation = null;
-            Gdx.app.log(TAG, "Failed to load projectile impact atlas", e);
         }
     }
 
@@ -963,13 +961,13 @@ public class GameScreen implements Screen {
     }
 
     private void disposeProjectileAssets() {
+        if (projectileImpactAtlas != null && projectileImpactAtlas != projectileAtlas) {
+            projectileImpactAtlas.dispose();
+        }
+        projectileImpactAtlas = null;
         if (projectileAtlas != null) {
             projectileAtlas.dispose();
             projectileAtlas = null;
-        }
-        if (projectileImpactAtlas != null) {
-            projectileImpactAtlas.dispose();
-            projectileImpactAtlas = null;
         }
         if (projectileFallbackTexture != null) {
             projectileFallbackTexture.dispose();
