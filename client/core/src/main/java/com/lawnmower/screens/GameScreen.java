@@ -81,6 +81,8 @@ public class GameScreen implements Screen {
 
     private final Vector2 renderBuffer = new Vector2();
     private final Vector2 projectileTempVector = new Vector2();
+    private final Vector2 projectileOriginBuffer = new Vector2();
+    private final Vector2 projectileDirectionBuffer = new Vector2();
     private final Map<Integer, Message.PlayerState> serverPlayerStates = new HashMap<>();
     private final Map<Integer, Message.EnemyState> enemyStateCache = new HashMap<>();
     private final Map<Integer, EnemyView> enemyViews = new HashMap<>();
@@ -168,7 +170,9 @@ public class GameScreen implements Screen {
     private int lockedEnemyId = 0;
     private float targetRefreshTimer = TARGET_REFRESH_INTERVAL;
 
-    private float clockOffsetMs = 0f;
+    private double clockOffsetMs = 0.0;
+    private final long localClockBaseMillis = System.currentTimeMillis();
+    private final long localClockBaseNano = System.nanoTime();
     private float smoothedRttMs = 120f;
 
     private static final float MAX_FRAME_DELTA = 1f / 30f;
@@ -616,9 +620,19 @@ public class GameScreen implements Screen {
             view.position.mulAdd(view.velocity, delta);
             boolean expiredClient = view.expireClientTimeMs > 0 && currentClientTimeMs >= view.expireClientTimeMs;
             boolean expiredServer = view.expireServerTimeMs > 0 && serverTimeMs >= view.expireServerTimeMs;
-            if (expiredServer && !expiredClient && view.expireClientTimeMs > currentClientTimeMs) {
-                // 服务端时间估算跳跃过大时，优先保证本地 TTL 让动画完整展示
-                expiredServer = false;
+            if (expiredServer) {
+                long clientTtl = view.expireClientTimeMs - view.spawnClientTimeMs;
+                if (!expiredClient && view.expireClientTimeMs > currentClientTimeMs) {
+                    expiredServer = false;
+                } else if (view.spawnServerTimeMs > 0) {
+                    long serverTtl = Math.max(0L, view.expireServerTimeMs - view.spawnServerTimeMs);
+                    long serverElapsed = serverTimeMs - view.spawnServerTimeMs;
+                    if (serverTtl > 0 && (serverElapsed - serverTtl) > 250L) {
+                        expiredServer = false;
+                    }
+                } else if (clientTtl > 0 && !expiredClient) {
+                    expiredServer = false;
+                }
             }
             boolean outOfBounds = isProjectileOutOfBounds(view.position);
             boolean expired = expiredClient || expiredServer;
@@ -1215,16 +1229,21 @@ public class GameScreen implements Screen {
      */
     //TODO:用不用补偿RTT
     private void sampleClockOffset(long serverTimeMs) {
-        long now = System.currentTimeMillis();
-        float offsetSample = serverTimeMs - now;
-        //平滑噪声
-        clockOffsetMs = MathUtils.lerp(clockOffsetMs, offsetSample, 0.1f);
+        long arrivalLocalTimeMs = getMonotonicTimeMs();
+        double offsetSample = serverTimeMs - arrivalLocalTimeMs;
+        clockOffsetMs += (offsetSample - clockOffsetMs) * 0.1;
     }
     /**
      * 本地时间
      */
     private long estimateServerTimeMs() {
-        return (long) (System.currentTimeMillis() + clockOffsetMs);
+        double estimate = getMonotonicTimeMs() + clockOffsetMs;
+        return (long) Math.round(estimate);
+    }
+
+    private long getMonotonicTimeMs() {
+        long elapsedNano = System.nanoTime() - localClockBaseNano;
+        return localClockBaseMillis + elapsedNano / 1_000_000L;
     }
 
     /**
@@ -1768,24 +1787,40 @@ public class GameScreen implements Screen {
             }
             long projectileId = Integer.toUnsignedLong(state.getProjectileId());
             ProjectileView view = new ProjectileView(projectileId);
+            Vector2 targetPosition = projectileTempVector;
             if (state.hasPosition()) {
-                setVectorFromProto(state.getPosition(), view.position);
+                setVectorFromProto(state.getPosition(), targetPosition);
+            } else {
+                targetPosition.set(displayPosition);
             }
+            Vector2 originPosition = projectileOriginBuffer;
+            resolveProjectileOrigin(state, targetPosition, originPosition);
+            view.position.set(originPosition);
             float rotationDeg = state.getRotation();
             view.rotationDeg = rotationDeg;
             float serverSpeed = state.hasProjectile() ? state.getProjectile().getSpeed() : 0f;
             float appliedSpeed = PEA_PROJECTILE_SPEED > 0f ? PEA_PROJECTILE_SPEED : serverSpeed;
-            float dirX = MathUtils.cosDeg(rotationDeg);
-            float dirY = MathUtils.sinDeg(rotationDeg);
-            if (Math.abs(dirX) <= 0.001f && Math.abs(dirY) <= 0.001f) {
-                dirX = 1f;
-                dirY = 0f;
+            Vector2 direction = projectileDirectionBuffer;
+            direction.set(targetPosition).sub(originPosition);
+            float travelDistance = direction.len();
+            if (travelDistance > 0.001f) {
+                direction.scl(1f / travelDistance);
+            } else {
+                float dirX = MathUtils.cosDeg(rotationDeg);
+                float dirY = MathUtils.sinDeg(rotationDeg);
+                direction.set(dirX, dirY);
+                if (direction.isZero(0.001f)) {
+                    direction.set(1f, 0f);
+                } else {
+                    direction.nor();
+                }
+                travelDistance = Math.max(0f, appliedSpeed * state.getTtlMs() / 1000f);
             }
-            view.velocity.set(dirX, dirY).nor().scl(appliedSpeed);
+            view.velocity.set(direction).scl(appliedSpeed);
             long ttlMs = Math.max(50L, state.getTtlMs());
-            if (serverSpeed > 0f && appliedSpeed > 0f) {
-                float distanceScale = serverSpeed / appliedSpeed;
-                ttlMs = (long) Math.ceil(ttlMs * distanceScale);
+            if (travelDistance > 0.001f && appliedSpeed > 0f) {
+                long travelTtl = (long) Math.ceil((travelDistance / appliedSpeed) * 1000f);
+                ttlMs = Math.max(ttlMs, travelTtl);
             }
             ttlMs = Math.max(50L, ttlMs);
             view.spawnServerTimeMs = serverTimeMs;
@@ -1807,6 +1842,34 @@ public class GameScreen implements Screen {
         }
         if (spawned > 0) {
             Gdx.app.log(TAG, "Spawn batch=" + spawned + ", activeProjectiles=" + projectileViews.size());
+        }
+    }
+
+    private void resolveProjectileOrigin(Message.ProjectileState state, Vector2 targetPosition, Vector2 outOrigin) {
+        if (state == null || outOrigin == null) {
+            return;
+        }
+        int ownerId = (int) state.getOwnerPlayerId();
+        if (ownerId == game.getPlayerId()) {
+            outOrigin.set(displayPosition);
+            return;
+        }
+        if (ownerId > 0) {
+            Vector2 remoteDisplay = remoteDisplayPositions.get(ownerId);
+            if (remoteDisplay != null) {
+                outOrigin.set(remoteDisplay);
+                return;
+            }
+            Message.PlayerState ownerState = serverPlayerStates.get(ownerId);
+            if (ownerState != null && ownerState.hasPosition()) {
+                outOrigin.set(ownerState.getPosition().getX(), ownerState.getPosition().getY());
+                return;
+            }
+        }
+        if (targetPosition != null) {
+            outOrigin.set(targetPosition);
+        } else {
+            outOrigin.set(displayPosition);
         }
     }
 
