@@ -5,6 +5,8 @@
 #include <limits>
 #include <numbers>
 
+#include <spdlog/spdlog.h>
+
 namespace {
 // 碰撞/战斗相关（后续可考虑挪到配置）
 constexpr float kPlayerCollisionRadius = 18.0f;
@@ -13,6 +15,7 @@ constexpr double kDefaultEnemyAttackIntervalSeconds = 0.8;
 constexpr double kMinEnemyAttackIntervalSeconds = 0.05;
 constexpr double kMaxEnemyAttackIntervalSeconds = 10.0;
 constexpr double kPlayerTargetRefreshIntervalSeconds = 0.2;
+constexpr uint64_t kAttackDirFallbackLogIntervalTicks = 60;
 
 // 默认射速 clamp（若配置缺失/非法则回退）
 constexpr double kMinAttackIntervalSeconds = 0.05;  // 射速上限（最小间隔，秒）
@@ -200,8 +203,21 @@ void GameManager::ProcessCombatAndProjectiles(
     return target;
   };
 
+  auto log_attack_dir_fallback =
+      [&](PlayerRuntime& player, uint32_t target_id,
+          const char* reason) {
+        if (scene.tick < player.last_attack_dir_log_tick +
+                            kAttackDirFallbackLogIntervalTicks) {
+          return;
+        }
+        player.last_attack_dir_log_tick = scene.tick;
+        spdlog::debug(
+            "Projectile dir fallback: player={} target={} reason={}",
+            player.state.player_id(), target_id, reason);
+      };
+
   auto resolve_projectile_direction =
-      [&](const PlayerRuntime& player, const EnemyRuntime& target,
+      [&](PlayerRuntime& player, const EnemyRuntime& target,
           float* out_dir_x, float* out_dir_y,
           float* out_rotation) -> bool {
     if (out_dir_x == nullptr || out_dir_y == nullptr ||
@@ -215,11 +231,21 @@ void GameManager::ProcessCombatAndProjectiles(
     float dir_y = target.state.position().y() - py;
     const float len_sq = dir_x * dir_x + dir_y * dir_y;
     if (len_sq <= 1e-6f) {
-      const auto [fallback_x, fallback_y] =
-          rotation_dir(player.state.rotation());
-      *out_dir_x = fallback_x;
-      *out_dir_y = fallback_y;
-      *out_rotation = player.state.rotation();
+      if (player.has_attack_dir) {
+        *out_dir_x = player.last_attack_dir_x;
+        *out_dir_y = player.last_attack_dir_y;
+        *out_rotation = player.last_attack_rotation;
+        log_attack_dir_fallback(
+            player, target.state.enemy_id(), "zero_dir_use_cached");
+      } else {
+        const auto [fallback_x, fallback_y] =
+            rotation_dir(player.state.rotation());
+        *out_dir_x = fallback_x;
+        *out_dir_y = fallback_y;
+        *out_rotation = player.state.rotation();
+        log_attack_dir_fallback(
+            player, target.state.enemy_id(), "zero_dir_use_player_rotation");
+      }
       return true;
     }
 
@@ -229,6 +255,10 @@ void GameManager::ProcessCombatAndProjectiles(
     *out_dir_x = dir_x;
     *out_dir_y = dir_y;
     *out_rotation = rotation_from_dir(dir_x, dir_y);
+    player.has_attack_dir = true;
+    player.last_attack_dir_x = dir_x;
+    player.last_attack_dir_y = dir_y;
+    player.last_attack_rotation = *out_rotation;
     return true;
   };
 

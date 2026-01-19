@@ -85,6 +85,11 @@ class GameManager {
     double attack_cooldown_seconds = 0.0;
     uint32_t locked_target_enemy_id = 0;
     double target_refresh_elapsed = 0.0;
+    bool has_attack_dir = false;
+    float last_attack_dir_x = 1.0f;
+    float last_attack_dir_y = 0.0f;
+    float last_attack_rotation = 0.0f;
+    uint64_t last_attack_dir_log_tick = 0;
     int32_t kill_count = 0;
     int32_t damage_dealt = 0;
     bool low_freq_dirty = false;
