@@ -50,3 +50,6 @@ hs_err_pid*
 *.swp
 *.swo
 *~
+
+# AI
+.codex/
