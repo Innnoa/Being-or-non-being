@@ -54,7 +54,7 @@ public class Main extends Game {
             log.error("Failed to connect to server", e);
             setScreen(new MainMenuScreen(this, skin));
         }
-        setScreen(new MainMenuScreen(Main.this, skin));
+        setScreen(new MainMenuScreen(Main.this,skin));
     }
 
     private void startNetworkThread() {
