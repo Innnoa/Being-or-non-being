@@ -42,9 +42,11 @@ public class GameScreen implements Screen {
 
     private static final float WORLD_WIDTH = 1280f;
     private static final float WORLD_HEIGHT = 720f;
-    // 涓庢湇鍔″櫒 GameManager::SceneConfig.move_speed (200f) 瀵归綈锛岄伩鍏嶉娴?鏉冨▉閫熷害涓嶄竴鑷?    private static final float PLAYER_SPEED = 200f;
+    // 涓庢湇鍔″櫒 GameManager::SceneConfig.move_speed (200f) 瀵归綈锛岄伩鍏嶉娴?鏉冨▉閫熷害涓嶄竴鑷?
+    private static final float PLAYER_SPEED = 200f;
 
-    // 杈撳叆鍒嗘鏇寸粏锛?0~33ms锛夛紝闄嶄綆鏈嶅姟绔爢绉?    private static final float MAX_COMMAND_DURATION = 0.025f;
+    // 杈撳叆鍒嗘鏇寸粏锛?0~33ms锛夛紝闄嶄綆鏈嶅姟绔爢绉?
+    private static final float MAX_COMMAND_DURATION = 0.025f;
     private static final float MIN_COMMAND_DURATION = 1f / 120f;
     private static final long SNAPSHOT_RETENTION_MS = 400L;
     private static final long MAX_EXTRAPOLATION_MS = 150L;
@@ -192,7 +194,8 @@ public class GameScreen implements Screen {
     private long lastDroppedSyncLogMs = 0L;
     private long lastAppliedSyncTick = -1L;
     private long lastAppliedServerTimeMs = -1L;
-    // 30Hz 鐩爣鍚屾闂撮殧绾?33ms锛岄缃竴涓潬杩戠洰鏍囩殑鍒濆€间究浜庡钩婊?    private float smoothedSyncIntervalMs = 35f;
+    // 30Hz 鐩爣鍚屾闂撮殧绾?33ms锛岄缃竴涓潬杩戠洰鏍囩殑鍒濆€间究浜庡钩婊?
+    private float smoothedSyncIntervalMs = 35f;
     private float smoothedSyncDeviationMs = 30f;
     private Message.C2S_PlayerInput pendingRateLimitedInput;
     private long lastInputSendMs = 0L;
@@ -212,13 +215,15 @@ public class GameScreen implements Screen {
         viewport = new FitViewport(WORLD_WIDTH, WORLD_HEIGHT, camera);
         batch = new SpriteBatch();//缁樺埗浜虹墿鐢ㄧ殑
         loadingFont = new BitmapFont();//缁樺埗瀛椾綋
-        loadingFont.getData().setScale(1.3f);//瀛椾綋鏀惧ぇ1.3鍊?        loadingLayout = new GlyphLayout();//甯冨眬鏂囨湰,鏄竴绉嶆瘮杈冮珮绾х殑甯冨眬
+        loadingFont.getData().setScale(1.3f);//瀛椾綋鏀惧ぇ1.3鍊?
+        loadingLayout = new GlyphLayout();//甯冨眬鏂囨湰,鏄竴绉嶆瘮杈冮珮绾х殑甯冨眬
 
         //鑳屾櫙
         try {
             backgroundTexture = new Texture(Gdx.files.internal("background/roomListBackground.png"));
         } catch (Exception e) {
-            Pixmap bgPixmap = new Pixmap((int) WORLD_WIDTH, (int) WORLD_HEIGHT, Pixmap.Format.RGBA8888);//璁剧疆绾壊鍥?            bgPixmap.setColor(0.05f, 0.15f, 0.05f, 1f);
+            Pixmap bgPixmap = new Pixmap((int) WORLD_WIDTH, (int) WORLD_HEIGHT, Pixmap.Format.RGBA8888);//璁剧疆绾壊鍥?
+            bgPixmap.setColor(0.05f, 0.15f, 0.05f, 1f);
             bgPixmap.fill();
             backgroundTexture = new Texture(bgPixmap);
             bgPixmap.dispose();
@@ -248,7 +253,8 @@ public class GameScreen implements Screen {
         resetTargetingState();
         spawnPlaceholderEnemy();
 
-        //璁剧疆浜虹墿鍒濆浣嶇疆涓哄湴鍥句腑澶?        predictedPosition.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
+        //璁剧疆浜虹墿鍒濆浣嶇疆涓哄湴鍥句腑澶?
+        predictedPosition.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
         displayPosition.set(predictedPosition);
         resetInitialStateTracking();
         resetAutoAttackState();
@@ -274,7 +280,8 @@ public class GameScreen implements Screen {
          */
         float renderDelta = getStableDelta(delta);
         Vector2 dir = getMovementInput();
-        isLocallyMoving = dir.len2() > 0.0001f;//鍒ゆ柇鏄惁鍦ㄧЩ鍔?        if (Gdx.input.isKeyJustPressed(AUTO_ATTACK_TOGGLE_KEY)) {
+        isLocallyMoving = dir.len2() > 0.0001f;//鍒ゆ柇鏄惁鍦ㄧЩ鍔?
+        if (Gdx.input.isKeyJustPressed(AUTO_ATTACK_TOGGLE_KEY)) {
             autoAttackToggle = !autoAttackToggle;
             if (autoAttackToggle) {
                 resetAutoAttackState();
@@ -282,7 +289,7 @@ public class GameScreen implements Screen {
                 autoAttackAccumulator = 0f;
                 autoAttackHoldTimer = 0f;
             }
-            showStatusToast(autoAttackToggle ? "鑷姩鏀诲嚮宸插紑鍚? : "鑷姩鏀诲嚮宸插叧闂?);
+            showStatusToast(autoAttackToggle ? "鑷姩鏀诲嚮宸插紑鍚?" : "姩鏀诲嚮宸插叧闂?");
         }
         boolean attacking = resolveAttackingState(renderDelta);
 
@@ -359,7 +366,8 @@ public class GameScreen implements Screen {
      * @return
      */
     private float getStableDelta(float rawDelta) {
-        float clamped = Math.min(rawDelta, MAX_FRAME_DELTA);//璁剧疆鏈€澶у抚闂撮殧闃叉鏋佸ぇ甯?        smoothedFrameDelta += (clamped - smoothedFrameDelta) * DELTA_SMOOTH_ALPHA;//鎸囨暟骞虫粦鎿嶄綔,鍒╃敤IIR浣庨€氭护娉㈠櫒
+        float clamped = Math.min(rawDelta, MAX_FRAME_DELTA);//璁剧疆鏈€澶у抚闂撮殧闃叉鏋佸ぇ甯?
+        smoothedFrameDelta += (clamped - smoothedFrameDelta) * DELTA_SMOOTH_ALPHA;//鎸囨暟骞虫粦鎿嶄綔,鍒╃敤IIR浣庨€氭护娉㈠櫒
         logFrameDeltaSpike(rawDelta, smoothedFrameDelta);//鏃ュ織杈撳嚭
         return smoothedFrameDelta;
     }
@@ -402,12 +410,15 @@ public class GameScreen implements Screen {
             }
             return;
         }
-        //鍒ゆ柇鏄惁鍙悎骞?        if (pendingMoveDir.epsilonEquals(dir, 0.001f) && pendingAttack == attacking) {
+        //鍒ゆ柇鏄惁鍙悎骞?
+        if (pendingMoveDir.epsilonEquals(dir, 0.001f) && pendingAttack == attacking) {
             pendingInputDuration += delta;//鍙互,寤堕暱鎸佺画鏃堕棿
         } else {
             flushPendingInput();//涓嶅彲浠?缁撴潫鏃у潡
-            startPendingChunk(dir, attacking, delta);//寮€濮嬫柊鍧?        }
-        //鏀诲嚮鍜屾寜閿寔缁椂闂磋秴杩囦笂闄?        if (pendingAttack || pendingInputDuration >= MAX_COMMAND_DURATION) {
+            startPendingChunk(dir, attacking, delta);//寮€濮嬫柊鍧?
+        }
+        //鏀诲嚮鍜屾寜閿寔缁椂闂磋秴杩囦笂闄?
+            if (pendingAttack || pendingInputDuration >= MAX_COMMAND_DURATION) {
             flushPendingInput();
         }
     }
@@ -509,45 +520,55 @@ public class GameScreen implements Screen {
      * @param delta
      */
     private void renderRemotePlayers(long renderServerTimeMs, TextureRegion frame, float delta) {
-        //绌烘鏌?        if (frame == null) {
+        //绌烘鏌?
+        if (frame == null) {
             return;
         }
-        //閬嶅巻姣忎釜鐜╁鐨勫揩鐓?        for (Map.Entry<Integer, Deque<ServerPlayerSnapshot>> entry : remotePlayerServerSnapshots.entrySet()) {
+        //閬嶅巻姣忎釜鐜╁鐨勫揩鐓?
+         for(Map.Entry<Integer, Deque<ServerPlayerSnapshot>> entry : remotePlayerServerSnapshots.entrySet()) {
             int playerId = entry.getKey();
             Deque<ServerPlayerSnapshot> snapshots = entry.getValue();
             if (snapshots == null || snapshots.isEmpty()) {
                 continue;
             }
-            //鎻掑€煎尯闂?            ServerPlayerSnapshot prev = null;
+            //鎻掑€煎尯闂?
+             ServerPlayerSnapshot prev = null;
             ServerPlayerSnapshot next = null;
             for (ServerPlayerSnapshot snap : snapshots) {
                 if (snap.serverTimestampMs <= renderServerTimeMs) {
-                    prev = snap;//鏈€鏂扮殑鏃у揩鐓?                } else {
-                    next = snap;//涓嬩竴涓揩鐓?                    break;
+                    prev = snap;//鏈€鏂扮殑鏃у揩鐓?
+                    } else {
+                    next = snap;//涓嬩竴涓揩鐓?
+                    break;
                 }
             }
 
             Vector2 targetPos = renderBuffer;
             /*
              鎻掑€艰绠楃瓥鐣?             */
-            //鏈変笂涓€涓拰涓嬩竴涓氨骞虫粦鎻掍腑鍊?            if (prev != null && next != null && next.serverTimestampMs > prev.serverTimestampMs) {
+            //鏈変笂涓€涓拰涓嬩竴涓氨骞虫粦鎻掍腑鍊?
+             if (prev != null && next != null && next.serverTimestampMs > prev.serverTimestampMs) {
                 float t = (renderServerTimeMs - prev.serverTimestampMs) /
                         (float) (next.serverTimestampMs - prev.serverTimestampMs);
                 t = MathUtils.clamp(t, 0f, 1f);
                 targetPos.set(prev.position).lerp(next.position, t);
-            }//鍙湁prev灏遍娴嬩竴涓柊鍊?            else if (prev != null) {
+            }//鍙湁prev灏遍娴嬩竴涓柊鍊
+             else if (prev != null) {
                 long ahead = Math.max(0L, renderServerTimeMs - prev.serverTimestampMs);
                 long clampedAhead = Math.min(ahead, MAX_EXTRAPOLATION_MS);
                 float seconds = clampedAhead / 1000f;
                 targetPos.set(prev.position).mulAdd(prev.velocity, seconds);
-            }//鍙湁鏂板€煎氨鐩存帴鐢?            else {
+            }//鍙湁鏂板€煎氨鐩存帴鐢?
+             else {
                 targetPos.set(next.position);
             }
             clampPositionToMap(targetPos);
             boolean remoteFacing = remoteFacingRight.getOrDefault(playerId, true);
-            //鑾峰彇鍒濆鍖栦綅缃紦瀛?            Vector2 displayPos = remoteDisplayPositions
+            //鑾峰彇鍒濆鍖栦綅缃紦瀛?
+             Vector2 displayPos = remoteDisplayPositions
                     .computeIfAbsent(playerId, id -> new Vector2(targetPos));
-            //骞虫粦杩囧害,灞炰簬鏄繚闄╃殑淇濋櫓,闃叉鍥犲寘璺宠穬閫犳垚鐨勭獊鍙?            float distSq = displayPos.dst2(targetPos);
+            //骞虫粦杩囧害,灞炰簬鏄繚闄╃殑淇濋櫓,闃叉鍥犲寘璺宠穬閫犳垚鐨勭獊鍙?
+             float distSq = displayPos.dst2(targetPos);
             if (distSq > REMOTE_DISPLAY_SNAP_DISTANCE * REMOTE_DISPLAY_SNAP_DISTANCE) {
                 displayPos.set(targetPos);
             } else {
@@ -628,7 +649,8 @@ public class GameScreen implements Screen {
             logProjectileRenderState(projectileViews.isEmpty() ? "skip_empty" : "skip_batch_null");
             return;
         }
-        //閬嶅巻鎶曞皠鐗?        for (ProjectileView view : projectileViews.values()) {
+        //閬嶅巻鎶曞皠鐗?
+        for (ProjectileView view : projectileViews.values()) {
             TextureRegion frame = resolveProjectileFrame(view);
             //鍔ㄦ€佽В鏋愯创鍥惧抚
             if (frame == null) {
@@ -652,7 +674,8 @@ public class GameScreen implements Screen {
      * 娓叉煋鎶曞皠鐗╁懡涓洰鏍囨椂鐨勭灛闂寸壒鏁?     * @param delta
      */
     private void renderProjectileImpacts(float delta) {
-        //瀹夊叏妫€鏌?        if (projectileImpacts.isEmpty() || batch == null) {
+        //瀹夊叏妫€鏌?
+        if (projectileImpacts.isEmpty() || batch == null) {
             return;
         }
         if (projectileImpactAnimation == null) {
@@ -663,7 +686,8 @@ public class GameScreen implements Screen {
         for (int i = projectileImpacts.size - 1; i >= 0; i--) {
             ProjectileImpact impact = projectileImpacts.get(i);
             impact.elapsed += delta;
-            //鑾峰彇褰撳墠鍔ㄧ敾甯?            TextureRegion frame = projectileImpactAnimation.getKeyFrame(impact.elapsed, false);
+            //鑾峰彇褰撳墠鍔ㄧ敾甯?
+            TextureRegion frame = projectileImpactAnimation.getKeyFrame(impact.elapsed, false);
             if (frame == null || projectileImpactAnimation.isAnimationFinished(impact.elapsed)) {
                 projectileImpacts.removeIndex(i);
                 continue;
@@ -715,10 +739,12 @@ public class GameScreen implements Screen {
      * @param delta
      */
     private void renderStatusToast(float delta) {
-        //鏇存柊鍊掕鏃?        if (statusToastTimer > 0f) {
+        //鏇存柊鍊掕鏃?
+        if (statusToastTimer > 0f) {
             statusToastTimer -= delta;
         }
-        //澶氶噸閫€鍑烘潯浠?        if (statusToastTimer <= 0f || loadingFont == null || statusToastMessage == null
+        //澶氶噸閫€鍑烘潯浠?
+        if (statusToastTimer <= 0f || loadingFont == null || statusToastMessage == null
                 || statusToastMessage.isBlank() || batch == null) {
             return;
         }
@@ -1058,13 +1084,15 @@ public class GameScreen implements Screen {
             latencyComponent = 90f;
         }
         latencyComponent = MathUtils.clamp(latencyComponent, 45f, 150f);
-        //鍚屾鎶栧姩鐨勭紦鍐插偍澶?        float jitterReserve = Math.abs(smoothedSyncIntervalMs - 33f) * 0.5f
+        //鍚屾鎶栧姩鐨勭紦鍐插偍澶?
+        float jitterReserve = Math.abs(smoothedSyncIntervalMs - 33f) * 0.5f
                 + (smoothedSyncDeviationMs * 1.3f) + 18f;
         jitterReserve = MathUtils.clamp(jitterReserve, INTERP_DELAY_MIN_MS, INTERP_DELAY_MAX_MS);
         //纭畾寤惰繜
         float target = Math.max(latencyComponent, jitterReserve);
         target = MathUtils.clamp(target, INTERP_DELAY_MIN_MS, INTERP_DELAY_MAX_MS);
-        //骞虫粦杩囧害鍒扮洰鏍囧€?        float delta = target - renderDelayMs;
+        //骞虫粦杩囧害鍒扮洰鏍囧€?
+        float delta = target - renderDelayMs;
         delta = MathUtils.clamp(delta, -MAX_RENDER_DELAY_STEP_MS, MAX_RENDER_DELAY_STEP_MS);
         renderDelayMs = MathUtils.clamp(renderDelayMs + delta * RENDER_DELAY_LERP,
                 INTERP_DELAY_MIN_MS, INTERP_DELAY_MAX_MS);
@@ -1085,7 +1113,8 @@ public class GameScreen implements Screen {
         if (nowMs - lastSyncLogMs < SYNC_INTERVAL_LOG_INTERVAL_MS) {
             return;
         }
-        //鍙鐞嗗紓甯告姈鍔?        Gdx.app.log(TAG, "Sync interval spike=" + intervalMs + "ms smooth=" + smoothInterval
+        //鍙鐞嗗紓甯告姈鍔?
+        Gdx.app.log(TAG, "Sync interval spike=" + intervalMs + "ms smooth=" + smoothInterval
                 + "ms renderDelay=" + renderDelayMs);
         lastSyncLogMs = nowMs;
     }
@@ -1150,10 +1179,14 @@ public class GameScreen implements Screen {
      * 杩涜缃戠粶璇婃柇,骞舵彁渚涘钩婊戝鐞?     * @param arrivalMs
      */
     private void updateSyncArrivalStats(long arrivalMs) {
-        //棣栨涓嶈繘琛屽鐞?        if (lastSyncArrivalMs != 0L) {
-            //褰撳墠鍖呴棿闅旂害绛変簬鏈嶅姟鍣ㄧ殑鍙戦€侀鐜?            float interval = arrivalMs - lastSyncArrivalMs;
-            //鎸囨暟骞虫粦骞冲潎闂撮殧---浣庨€氭护娉?            smoothedSyncIntervalMs += (interval - smoothedSyncIntervalMs) * SYNC_INTERVAL_SMOOTH_ALPHA;
-            //璁＄畻骞跺钩婊戞姈鍔?            float deviation = Math.abs(interval - smoothedSyncIntervalMs);
+        //棣栨涓嶈繘琛屽鐞?
+        if (lastSyncArrivalMs != 0L) {
+            //褰撳墠鍖呴棿闅旂害绛変簬鏈嶅姟鍣ㄧ殑鍙戦€侀鐜?
+            float interval = arrivalMs - lastSyncArrivalMs;
+            //鎸囨暟骞虫粦骞冲潎闂撮殧---浣庨€氭护娉?
+            smoothedSyncIntervalMs += (interval - smoothedSyncIntervalMs) * SYNC_INTERVAL_SMOOTH_ALPHA;
+            //璁＄畻骞跺钩婊戞姈鍔?
+            float deviation = Math.abs(interval - smoothedSyncIntervalMs);
             smoothedSyncDeviationMs += (deviation - smoothedSyncDeviationMs) * SYNC_DEVIATION_SMOOTH_ALPHA;
             //瀹夊叏澶勭悊
             smoothedSyncDeviationMs = MathUtils.clamp(smoothedSyncDeviationMs, 0f, 220f);
@@ -1306,7 +1339,8 @@ public class GameScreen implements Screen {
         }
         updateSyncArrivalStats(arrivalMs);
         sampleClockOffset(sync.getServerTimeMs());
-        //澶勭悊鏁屼汉鐘舵€?        if (!sync.getEnemiesList().isEmpty()) {
+        //澶勭悊鏁屼汉鐘舵€?
+        if (!sync.getEnemiesList().isEmpty()) {
             for (Message.EnemyState enemy : sync.getEnemiesList()) {
                 enemyStateCache.put((int) enemy.getEnemyId(), enemy);
             }
@@ -1320,19 +1354,23 @@ public class GameScreen implements Screen {
      * @param delta
      */
     public void onGameStateDeltaReceived(Message.S2C_GameStateDeltaSync delta) {
-        //鎺ユ敹鍖呰幏鍙栧悓姝ユ椂闂?        long arrivalMs = TimeUtils.millis();
+        //鎺ユ敹鍖呰幏鍙栧悓姝ユ椂闂?
+        long arrivalMs = TimeUtils.millis();
         Message.Timestamp syncTime = delta.hasSyncTime() ? delta.getSyncTime() : null;
-        //鏈夋晥鎬ф楠?        if (!shouldAcceptStatePacket(syncTime, delta.getServerTimeMs(), arrivalMs)) {
+        //鏈夋晥鎬ф楠?
+        if (!shouldAcceptStatePacket(syncTime, delta.getServerTimeMs(), arrivalMs)) {
             return;
         }
-        //鍚堝苟鐜╁澧為噺鍒板畬鏁寸姸鎬?        List<Message.PlayerState> mergedPlayers = new ArrayList<>(delta.getPlayersCount());
+        //鍚堝苟鐜╁澧為噺鍒板畬鏁寸姸鎬?
+        List<Message.PlayerState> mergedPlayers = new ArrayList<>(delta.getPlayersCount());
         for (Message.PlayerStateDelta playerDelta : delta.getPlayersList()) {
             Message.PlayerState merged = mergePlayerDelta(playerDelta);
             if (merged != null) {
                 mergedPlayers.add(merged);
             }
         }
-        //鍚堝苟鏁屼汉澧為噺鍒板畬鏁寸姸鎬?        List<Message.EnemyState> updatedEnemies = new ArrayList<>(delta.getEnemiesCount());
+        //鍚堝苟鏁屼汉澧為噺鍒板畬鏁寸姸鎬?
+        List<Message.EnemyState> updatedEnemies = new ArrayList<>(delta.getEnemiesCount());
         for (Message.EnemyStateDelta enemyDelta : delta.getEnemiesList()) {
             Message.EnemyState mergedEnemy = mergeEnemyDelta(enemyDelta);
             if (mergedEnemy != null) {
@@ -1341,7 +1379,9 @@ public class GameScreen implements Screen {
         }
         //缃戠粶璐ㄩ噺+鏃堕挓鏍″噯
         updateSyncArrivalStats(arrivalMs);//鏇存柊鍋忕Щ鎸囨爣
-        sampleClockOffset(delta.getServerTimeMs());//浼扮畻瀹㈡埛绔埌鏈嶅姟鍣ㄧ殑鍋忕Щ閲?        //鍒嗗彂澶勭悊鐘舵€?        handlePlayersFromServer(mergedPlayers, delta.getServerTimeMs());
+        sampleClockOffset(delta.getServerTimeMs());//浼扮畻瀹㈡埛绔埌鏈嶅姟鍣ㄧ殑鍋忕Щ閲?
+        // 鍒嗗彂澶勭悊鐘舵€?
+        handlePlayersFromServer(mergedPlayers, delta.getServerTimeMs());
         if (!updatedEnemies.isEmpty()) {
             syncEnemyViews(updatedEnemies, delta.getServerTimeMs());
         }
@@ -1356,11 +1396,13 @@ public class GameScreen implements Screen {
         //鑾峰彇鏈湴鐜╁id
         int myId = game.getPlayerId();
         Message.PlayerState selfStateFromServer = null;
-        //閬嶅巻鎵€鏈夌帺瀹剁姸鎬?        if (players != null) {
+        //閬嶅巻鎵€鏈夌帺瀹剁姸鎬?
+        if (players != null) {
             for (Message.PlayerState player : players) {
                 int playerId = (int) player.getPlayerId();
                 serverPlayerStates.put(playerId, player);
-                //鏈湴鐜╁,娲荤潃鎵嶅鐞?                if (playerId == myId) {
+                //鏈湴鐜╁,娲荤潃鎵嶅鐞?
+                if (playerId == myId) {
                     if (player.getIsAlive()) {
                         selfStateFromServer = player;
                     }
@@ -1376,7 +1418,8 @@ public class GameScreen implements Screen {
         }
         //娓呯悊杩囨湡鐜╁
         purgeStaleRemotePlayers(serverTimeMs);
-        //搴旂敤鏈嶅姟鍣ㄥ鑷韩鐨勭煫姝?        if (selfStateFromServer != null) {
+        //搴旂敤鏈嶅姟鍣ㄥ鑷韩鐨勭煫姝?
+        if (selfStateFromServer != null) {
             applySelfStateFromServer(selfStateFromServer);
         }
     }
@@ -1386,13 +1429,15 @@ public class GameScreen implements Screen {
      * @param serverTimeMs
      */
     private void syncEnemyViews(Collection<Message.EnemyState> enemies, long serverTimeMs) {
-        //绌哄垽鏂?        if (enemies == null || enemies.isEmpty()) {
+        //绌哄垽鏂?
+        if (enemies == null || enemies.isEmpty()) {
             purgeStaleEnemies(serverTimeMs);
             return;
         }
 
         removePlaceholderEnemy();
-        //閬嶅巻鏁屼汉鐘舵€?        for (Message.EnemyState enemy : enemies) {
+        //閬嶅巻鏁屼汉鐘舵€?
+        for (Message.EnemyState enemy : enemies) {
             if (enemy == null || !enemy.hasPosition()) {
                 continue;
             }
@@ -1419,7 +1464,8 @@ public class GameScreen implements Screen {
                     resolveEnemyAttackAnimation(typeId),
                     getEnemyFallbackRegion()
             );
-            //璁板綍鏈€鍚庡彲瑙佹椂闂?            enemyLastSeen.put(enemyId, serverTimeMs);
+            //璁板綍鏈€鍚庡彲瑙佹椂闂?
+            enemyLastSeen.put(enemyId, serverTimeMs);
         }
         //娓呯悊杩囨湡鏁屼汉
         purgeStaleEnemies(serverTimeMs);
@@ -1430,14 +1476,16 @@ public class GameScreen implements Screen {
      * @param selfStateFromServer
      */
     private void applySelfStateFromServer(Message.PlayerState selfStateFromServer) {
-        //鑾峰彇鏈嶅姟鍣ㄤ綅缃?        Vector2 serverPos = new Vector2(
+        //鑾峰彇鏈嶅姟鍣ㄤ綅缃?
+        Vector2 serverPos = new Vector2(
                 selfStateFromServer.getPosition().getX(),
                 selfStateFromServer.getPosition().getY()
         );
         clampPositionToMap(serverPos);
         //鎻愬彇鍏冩暟鎹?澶勭悊鏈€鍚庤緭鍏ョ殑搴忓彿
         int lastProcessedSeq = selfStateFromServer.getLastProcessedInputSeq();
-        //鍒涘缓瀛樺偍鐘舵€佸揩鐓?        PlayerStateSnapshot snapshot = new PlayerStateSnapshot(
+        //鍒涘缓瀛樺偍鐘舵€佸揩鐓?
+        PlayerStateSnapshot snapshot = new PlayerStateSnapshot(
                 serverPos,
                 selfStateFromServer.getRotation(),
                 lastProcessedSeq
@@ -1446,7 +1494,8 @@ public class GameScreen implements Screen {
         while (snapshotHistory.size() > 10) {
             snapshotHistory.poll();
         }
-        //鐘舵€佸崗璋?        reconcileWithServer(snapshot);
+        //鐘舵€佸崗璋?
+        reconcileWithServer(snapshot);
     }
 
     /**
@@ -1462,7 +1511,8 @@ public class GameScreen implements Screen {
                 .computeIfAbsent(playerId, k -> new ArrayDeque<>());
         //閫熷害浼扮畻
         Vector2 velocity = new Vector2();
-        ServerPlayerSnapshot previous = queue.peekLast();//鏈€鏂板揩鐓?        if (previous != null) {
+        ServerPlayerSnapshot previous = queue.peekLast();//鏈€鏂板揩鐓
+        if (previous != null) {
             long deltaMs = serverTimeMs - previous.serverTimestampMs;
             if (deltaMs > 0) {
                 velocity.set(position).sub(previous.position).scl(1000f / deltaMs);
@@ -1477,7 +1527,8 @@ public class GameScreen implements Screen {
         }
         //鏇存柊鏈濆悜
         updateRemoteFacing(playerId, velocity, rotation);
-        //鍒涘缓骞跺瓨鍏ュ揩鐓?        ServerPlayerSnapshot snap = new ServerPlayerSnapshot(position, rotation, velocity, serverTimeMs);
+        //鍒涘缓骞跺瓨鍏ュ揩鐓?
+        ServerPlayerSnapshot snap = new ServerPlayerSnapshot(position, rotation, velocity, serverTimeMs);
         queue.addLast(snap);
         //婊戝姩绐楀彛娓呯悊
         while (queue.size() > 1 &&
@@ -1545,12 +1596,14 @@ public class GameScreen implements Screen {
             if (sentLogical != null) {
                 sample = logicalTimeMs - sentLogical;//娓告垙閫昏緫鏃堕棿
             } else {
-                sample = System.currentTimeMillis() - acknowledged.timestampMs;//鍥為€€鍒扮郴缁熸椂闂?            }
+                sample = System.currentTimeMillis() - acknowledged.timestampMs;//鍥為€€鍒扮郴缁熸椂闂?
+                }
             if (sample > 0f) {
                 smoothedRttMs = MathUtils.lerp(smoothedRttMs, sample, 0.2f);
             }
         }
-        //搴旂敤鏈嶅姟鍣ㄧ姸鎬佸拰鍒濆鍖栧鐞?        float correctionDist = predictedPosition.dst(serverSnapshot.position);
+        //搴旂敤鏈嶅姟鍣ㄧ姸鎬佸拰鍒濆鍖栧鐞?
+            float correctionDist = predictedPosition.dst(serverSnapshot.position);
         boolean wasInitialized = hasReceivedInitialState;
         predictedPosition.set(serverSnapshot.position);
         predictedRotation = serverSnapshot.rotation;
@@ -1561,12 +1614,14 @@ public class GameScreen implements Screen {
             clearInitialStateWait();
             displayPosition.set(predictedPosition);//棣栨鍚屾鐩存帴璺宠浆
         }
-        //閲嶆斁鏈‘璁よ緭鍏?        for (PlayerInputCommand input : unconfirmedInputs.values()) {
+        //閲嶆斁鏈‘璁よ緭鍏?
+            for (PlayerInputCommand input : unconfirmedInputs.values()) {
             if (input.seq > serverSnapshot.lastProcessedInputSeq) {
                 applyInputLocally(predictedPosition, predictedRotation, input, input.deltaSeconds);
             }
         }
-        //娓呯悊宸茬‘璁よ緭鍏?        unconfirmedInputs.entrySet().removeIf(entry -> {
+        //娓呯悊宸茬‘璁よ緭鍏?
+            unconfirmedInputs.entrySet().removeIf(entry -> {
             boolean applied = entry.getKey() <= serverSnapshot.lastProcessedInputSeq;
             if (applied) {
                 inputSendTimes.remove(entry.getKey());
@@ -1574,7 +1629,8 @@ public class GameScreen implements Screen {
             return applied;
         });
         pruneUnconfirmedInputs();
-        //鐘舵€佹爣蹇楁洿鏂?        hasReceivedInitialState = true;
+        //鐘舵€佹爣蹇楁洿鏂?
+            hasReceivedInitialState = true;
         if (unconfirmedInputs.isEmpty()) {
             idleAckSent = true;
         }
@@ -1593,7 +1649,8 @@ public class GameScreen implements Screen {
      * @return
      */
     private Message.PlayerState mergePlayerDelta(Message.PlayerStateDelta delta) {
-        //绌哄€兼鏌?        if (delta == null) {
+        //绌哄€兼鏌?
+        if (delta == null) {
             return null;
         }
         int playerId = (int) delta.getPlayerId();
@@ -1605,7 +1662,8 @@ public class GameScreen implements Screen {
         }
         //鏇存柊
         Message.PlayerState.Builder builder = base.toBuilder();
-        //浣嶆帺鐮侀┍鍔ㄦ洿鏂?        int mask = delta.getChangedMask();
+        //浣嶆帺鐮侀┍鍔ㄦ洿鏂?
+        int mask = delta.getChangedMask();
         if ((mask & PLAYER_DELTA_POSITION_MASK) != 0 && delta.hasPosition()) {
             builder.setPosition(delta.getPosition());
         }
@@ -1630,18 +1688,21 @@ public class GameScreen implements Screen {
      * @return
      */
     private Message.EnemyState mergeEnemyDelta(Message.EnemyStateDelta delta) {
-        //绌哄€兼鏌?        if (delta == null) {
+        //绌哄€兼鏌?
+        if (delta == null) {
             return null;
         }
         int enemyId = (int) delta.getEnemyId();
         Message.EnemyState base = enemyStateCache.get(enemyId);
-        //鏁屼汉棣栨鍑虹幇鎴栬€呯姸鎬佷涪澶?        if (base == null) {
+        //鏁屼汉棣栨鍑虹幇鎴栬€呯姸鎬佷涪澶?
+        if (base == null) {
             requestDeltaResync("enemy_" + enemyId);
             return null;
         }
         //鏇存柊
         Message.EnemyState.Builder builder = base.toBuilder();
-        //浣嶆帺鐮侀┍鍔ㄧ姸鎬佹洿鏂?        int mask = delta.getChangedMask();
+        //浣嶆帺鐮侀┍鍔ㄧ姸鎬佹洿鏂?
+        int mask = delta.getChangedMask();
         if ((mask & ENEMY_DELTA_POSITION_MASK) != 0 && delta.hasPosition()) {
             builder.setPosition(delta.getPosition());
         }
@@ -1662,7 +1723,8 @@ public class GameScreen implements Screen {
      * @param reason
      */
     private void requestDeltaResync(String reason) {
-        //game鏈夋晥骞朵笖涓嶅湪鍐峰嵈鏃堕棿鍐?        if (game == null) {
+        //game鏈夋晥骞朵笖涓嶅湪鍐峰嵈鏃堕棿鍐?
+        if (game == null) {
             return;
         }
         long now = TimeUtils.millis();
@@ -1810,8 +1872,8 @@ public class GameScreen implements Screen {
             serverPlayerStates.put(playerId, builder.build());
         }
         String toast = playerId == game.getPlayerId()
-                ? "浣犲彈鍒?" + hurt.getDamage() + " 鐐逛激瀹筹紝鍓╀綑 " + hurt.getRemainingHealth()
-                : "鐜╁ " + playerId + " 鍙楀埌 " + hurt.getDamage() + " 浼ゅ";
+                ? "位置1" + hurt.getDamage() + " 位置2 " + hurt.getRemainingHealth()
+                : "位置3 " + playerId + " 位置4 " + hurt.getDamage() + " 位置5";
         showStatusToast(toast);
         triggerEnemyAttackAnimation(hurt.getSourceId());
     }
@@ -1898,7 +1960,7 @@ public class GameScreen implements Screen {
         }
         String toast = died.getKillerPlayerId() > 0
                 ? "鏁屼汉琚帺瀹?" + died.getKillerPlayerId() + " 鍑昏触"
-                : "鏁屼汉 " + enemyId + " 琚秷鐏?;
+                : "鏁屼汉 " + enemyId + " 琚秷鐏?";
         showStatusToast(toast);
     }
 
@@ -1924,14 +1986,14 @@ public class GameScreen implements Screen {
         if (droppedItem == null || droppedItem.getItemsCount() == 0) {
             return;
         }
-        showStatusToast("鎺夎惤浜?" + droppedItem.getItemsCount() + " 涓亾鍏?);
+        showStatusToast("鎺夎惤浜?" + droppedItem.getItemsCount() + " 涓亾鍏?");
     }
 
     private void handleGameOver(Message.S2C_GameOver gameOver) {
         if (gameOver == null) {
-            showStatusToast( 游戏结束);
+            showStatusToast( "游戏结束");
         } else {
-            showStatusToast(gameOver.getVictory() ? 战斗胜利！ : 战斗失败);
+            showStatusToast(gameOver.getVictory() ? "战斗胜利！" : "战斗失败");
         }
         projectileViews.clear();
         projectileImpacts.clear();
@@ -1941,8 +2003,8 @@ public class GameScreen implements Screen {
             hasShownGameOver = true;
             game.setScreen(new GameOverScreen(game, gameOver));
         }
-    } else {
-            showStatusToast(gameOver.getVictory() ? "鎴樻枟鑳滃埄锛? : "鎴樻枟澶辫触");
+     else {
+            showStatusToast(gameOver.getVictory() ? "鎴樻枟鑳滃埄锛?" : "鎴樻枟澶辫触");
         }
         projectileViews.clear();
         projectileImpacts.clear();
@@ -2026,7 +2088,8 @@ public class GameScreen implements Screen {
      * 浣嶇疆淇鍜屾棩蹇楄緭鍑?     * @param delta
      */
     private void updateDisplayPosition(float delta) {
-        //鏈垵濮嬪寲鍒欒烦杩?        if (!hasReceivedInitialState) {
+        //鏈垵濮嬪寲鍒欒烦杩?
+        if (!hasReceivedInitialState) {
             return;
         }
         //闈炴湰鍦版帶鍒惰鑹插氨鐩存帴鍚屾
@@ -2034,7 +2097,8 @@ public class GameScreen implements Screen {
             displayPosition.set(predictedPosition);
             return;
         }
-        //灏忓亸宸慨姝?        float distSq = displayPosition.dst2(predictedPosition);
+        //灏忓亸宸慨姝?
+        float distSq = displayPosition.dst2(predictedPosition);
         if (distSq <= DISPLAY_SNAP_DISTANCE * DISPLAY_SNAP_DISTANCE) {
             displayPosition.set(predictedPosition);
             return;
@@ -2044,7 +2108,8 @@ public class GameScreen implements Screen {
         if (distance > DISPLAY_DRIFT_LOG_THRESHOLD) {
             logDisplayDrift(distance);
         }
-        //骞虫粦鎻掑€?鍚戦娴嬩綅缃潬鎷?        float alpha = MathUtils.clamp(delta * DISPLAY_LERP_RATE, 0f, 1f);
+        //骞虫粦鎻掑€?鍚戦娴嬩綅缃潬鎷?
+        float alpha = MathUtils.clamp(delta * DISPLAY_LERP_RATE, 0f, 1f);
         displayPosition.lerp(predictedPosition, alpha);
     }
 
@@ -2078,7 +2143,8 @@ public class GameScreen implements Screen {
         if (correctionDist < POSITION_CORRECTION_LOG_THRESHOLD) {
             return;
         }
-        //鑾峰彇鏃堕棿,纭繚鏃ュ織鍙戦€侀鐜?        long nowMs = TimeUtils.millis();
+        //鑾峰彇鏃堕棿,纭繚鏃ュ織鍙戦€侀鐜?
+        long nowMs = TimeUtils.millis();
         if (nowMs - lastCorrectionLogMs < POSITION_LOG_INTERVAL_MS) {
             return;
         }
@@ -2093,10 +2159,12 @@ public class GameScreen implements Screen {
      * @param drift
      */
     private void logDisplayDrift(float drift) {
-        //闃插尽鎬х紪绋?浜屾鏍￠獙婕傜Щ闃堝€?        if (drift < DISPLAY_DRIFT_LOG_THRESHOLD) {
+        //闃插尽鎬х紪绋?浜屾鏍￠獙婕傜Щ闃堝€?
+        if (drift < DISPLAY_DRIFT_LOG_THRESHOLD) {
             return;
         }
-        //鑾峰彇鏃堕棿,纭繚鏃ュ織鍙戦€侀鐜?        long nowMs = TimeUtils.millis();
+        //鑾峰彇鏃堕棿,纭繚鏃ュ織鍙戦€侀鐜?
+        long nowMs = TimeUtils.millis();
         if (nowMs - lastDisplayDriftLogMs < DISPLAY_LOG_INTERVAL_MS) {
             return;
         }
@@ -2255,11 +2323,14 @@ public class GameScreen implements Screen {
      * 鑾峰彇鍏ㄩ噺淇℃伅骞堕檮甯﹁幏鍙栦笉鍒扮殑鍔炴硶
      */
     private void maybeRequestInitialStateResync() {
-        //鍐嶅垽鏂竴涓嬮伩鍏嶈鍒?濡傛灉杩欎釜涓嶆槸閭ｅ氨鏄鑹茬汗鐞嗘病鍔犺浇濂?        if (hasReceivedInitialState) {
+        //鍐嶅垽鏂竴涓嬮伩鍏嶈鍒?濡傛灉杩欎釜涓嶆槸閭ｅ氨鏄鑹茬汗鐞嗘病鍔犺浇濂?
+        if (hasReceivedInitialState) {
             return;
         }
-        //鏃堕棿鎴?        long now = TimeUtils.millis();
-        //濡傛灉瀹㈡埛绔垵濮嬪寲寮€濮嬫椂闂磋繕鏄?灏辫幏鍙栦竴娆″垵濮嬬姸鎬?        if (initialStateStartMs == 0L) {
+        //鏃堕棿鎴?
+        long now = TimeUtils.millis();
+        //濡傛灉瀹㈡埛绔垵濮嬪寲寮€濮嬫椂闂磋繕鏄?灏辫幏鍙栦竴娆″垵濮嬬姸鎬?
+        if (initialStateStartMs == 0L) {
             resetInitialStateTracking();
             return;
         }
@@ -2267,7 +2338,8 @@ public class GameScreen implements Screen {
         if ((now - lastInitialStateRequestMs) >= INITIAL_STATE_REQUEST_INTERVAL_MS) {
             maybeSendInitialStateRequest(now, "retry_interval");
         }
-        //鍒嗙骇閲嶈瘯,浠庢甯搁噸璇曞埌闇€瑕佹姏璀﹀憡鍒颁弗閲嶈鍛?        long waitDuration = now - initialStateStartMs;
+        //鍒嗙骇閲嶈瘯,浠庢甯搁噸璇曞埌闇€瑕佹姏璀﹀憡鍒颁弗閲嶈鍛?
+        long waitDuration = now - initialStateStartMs;
         if (!initialStateWarningLogged && waitDuration >= INITIAL_STATE_WARNING_MS) {
             Gdx.app.log(TAG, "Still waiting for first GameStateSync, waitMs=" + waitDuration);
             initialStateWarningLogged = true;
