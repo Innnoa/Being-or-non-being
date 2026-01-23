@@ -1872,8 +1872,8 @@ public class GameScreen implements Screen {
             serverPlayerStates.put(playerId, builder.build());
         }
         String toast = playerId == game.getPlayerId()
-                ? "位置1" + hurt.getDamage() + " 位置2 " + hurt.getRemainingHealth()
-                : "位置3 " + playerId + " 位置4 " + hurt.getDamage() + " 位置5";
+                ? "你受到了" + hurt.getDamage() + "点伤害, 剩余血量 " + hurt.getRemainingHealth()
+                : "玩家 " + playerId + " 受到了 " + hurt.getDamage() + " 点伤害";
         showStatusToast(toast);
         triggerEnemyAttackAnimation(hurt.getSourceId());
     }
@@ -1959,8 +1959,8 @@ public class GameScreen implements Screen {
             lockedEnemyId = 0;
         }
         String toast = died.getKillerPlayerId() > 0
-                ? "鏁屼汉琚帺瀹?" + died.getKillerPlayerId() + " 鍑昏触"
-                : "鏁屼汉 " + enemyId + " 琚秷鐏?";
+                ? "已有敌人被" + died.getKillerPlayerId() + "击败"
+                : "敌人" + enemyId + " 被消灭";
         showStatusToast(toast);
     }
 
@@ -1977,8 +1977,8 @@ public class GameScreen implements Screen {
             serverPlayerStates.put(playerId, builder.build());
         }
         String toast = playerId == game.getPlayerId()
-                ? "浣犲崌绾у埌 Lv." + levelUp.getNewLevel()
-                : "鐜╁ " + playerId + " 鍗囩骇鍒?Lv." + levelUp.getNewLevel();
+                ? "你已升级到 Lv." + levelUp.getNewLevel()
+                : "玩家" + playerId + " 到达了Lv." + levelUp.getNewLevel();
         showStatusToast(toast);
     }
 
@@ -1986,7 +1986,7 @@ public class GameScreen implements Screen {
         if (droppedItem == null || droppedItem.getItemsCount() == 0) {
             return;
         }
-        showStatusToast("鎺夎惤浜?" + droppedItem.getItemsCount() + " 涓亾鍏?");
+        showStatusToast("掉落了" + droppedItem.getItemsCount() + " 个战利品");
     }
 
     private void handleGameOver(Message.S2C_GameOver gameOver) {
@@ -2004,7 +2004,7 @@ public class GameScreen implements Screen {
             game.setScreen(new GameOverScreen(game, gameOver));
         }
      else {
-            showStatusToast(gameOver.getVictory() ? "鎴樻枟鑳滃埄锛?" : "鎴樻枟澶辫触");
+            showStatusToast(gameOver.getVictory() ? "恭喜通关" : "下次努力");
         }
         projectileViews.clear();
         projectileImpacts.clear();
