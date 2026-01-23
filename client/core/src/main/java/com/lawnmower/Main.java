@@ -8,10 +8,7 @@ import com.google.protobuf.UnknownFieldSet;
 
 import com.lawnmower.network.TcpClient;
 import com.lawnmower.network.UdpClient;
-import com.lawnmower.screens.GameRoomScreen;
-import com.lawnmower.screens.GameScreen;
-import com.lawnmower.screens.MainMenuScreen;
-import com.lawnmower.screens.RoomListScreen;
+import com.lawnmower.screens.*;
 import com.lawnmower.ui.PvzSkin;
 
 import lawnmower.Message;

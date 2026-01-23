@@ -7,7 +7,7 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
-import com.badlogic.gdx.graphics.g2d.TextureRegion;
+import com.badlogic.gdx.graphics.g2d.Sprite;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
@@ -20,7 +20,7 @@ import com.badlogic.gdx.scenes.scene2d.ui.Skin;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
-import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
+import com.badlogic.gdx.scenes.scene2d.utils.SpriteDrawable;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Scaling;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
@@ -42,8 +42,8 @@ public class GameOverScreen implements Screen {
     private static final float DESIGN_WIDTH = 2560f;
     private static final float DESIGN_HEIGHT = 1440f;
     private static final String BACKGROUND_PATH = "background/GameOverBackground.png";
-    private static final String VICTORY_ICON_PATH = "background/GameOverVictory.png";
-    private static final String DEFEAT_ICON_PATH = "background/GameOverDefeat.png";
+    private static final String VICTORY_ICON_PATH = "background/Vector.png";
+    private static final String DEFEAT_ICON_PATH = "background/UnVector.png";
     private static final int MAX_NAME_CODEPOINTS = 4;
 
     private final Main game;
@@ -54,7 +54,6 @@ public class GameOverScreen implements Screen {
     private Texture backgroundTexture;
     private Texture victoryIconTexture;
     private Texture defeatIconTexture;
-    private Texture tooltipBackgroundTexture;
     private Label tooltipLabel;
     private final Vector2 tooltipStageCoords = new Vector2();
 
@@ -73,7 +72,6 @@ public class GameOverScreen implements Screen {
                 (int) DESIGN_WIDTH, (int) DESIGN_HEIGHT);
         victoryIconTexture = loadTextureOrFallback(VICTORY_ICON_PATH, Color.GOLD, 220, 220);
         defeatIconTexture = loadTextureOrFallback(DEFEAT_ICON_PATH, Color.BROWN, 220, 220);
-        tooltipBackgroundTexture = createSolidTexture(new Color(0f, 0f, 0f, 0.65f), 8, 8);
         tooltipLabel = createTooltipLabel();
 
         buildUi();
@@ -86,21 +84,26 @@ public class GameOverScreen implements Screen {
         stage.addActor(background);
 
         Image icon = new Image(isVictory() ? victoryIconTexture : defeatIconTexture);
-        icon.setSize(220f, 220f);
-        icon.setPosition(80f, 80f);
+        icon.setSize(220f, 300f);
+        icon.setPosition(540f, 230f);
         stage.addActor(icon);
+
 
         Table root = new Table();
         root.setFillParent(true);
+        root.padTop(230f).padBottom(230f).padLeft(780f).padRight(660f);
         root.center();
-        root.padTop(160f).padBottom(200f).padLeft(420f).padRight(420f);
+
         stage.addActor(root);
 
-        Label titleLabel = new Label(getResultTitle(), skin, "default");
-        titleLabel.setAlignment(Align.center);
-        titleLabel.setColor(isVictory() ? Color.valueOf("fff27c") : Color.valueOf("f88c8c"));
-        titleLabel.setFontScale(1.1f);
-        root.add(titleLabel).expandX().top().padBottom(80f).row();
+        Label titleLabel = createResultLabel();
+        root.add(titleLabel)
+                .growX()
+                .padTop(170f)
+                .padRight(400f)
+                .padBottom(80f)
+                .center()
+                .row();
 
         Table scoreTable = new Table();
         scoreTable.top().left();
@@ -109,25 +112,44 @@ public class GameOverScreen implements Screen {
         ScrollPane scrollPane = new ScrollPane(scoreTable, skin);
         scrollPane.setFadeScrollBars(false);
         scrollPane.setScrollingDisabled(true, false);
+        scrollPane.getStyle().background=null;
         root.add(scrollPane).expand().fill().row();
 
-        TextButton backButton = new TextButton("返回主页面", skin, "CreateButton");
+        TextButton backButton = new TextButton("返回主菜单", skin, "CreateButton");
         backButton.addListener(new ChangeListener() {
             @Override
             public void changed(ChangeEvent event, Actor actor) {
                 game.setScreen(new MainMenuScreen(game, skin));
             }
         });
-        root.add(backButton).size(430f, 120f).padTop(40f).center();
+        root.add(backButton).size(430f, 120f).center().padTop(-30f);
 
         stage.addActor(tooltipLabel);
+    }
+
+    private Label createResultLabel() {
+        Label.LabelStyle titleStyle;
+        if (skin != null && skin.has("default", Label.LabelStyle.class)) {
+            titleStyle = new Label.LabelStyle(skin.get("default", Label.LabelStyle.class));
+        } else {
+            titleStyle = new Label.LabelStyle();
+        }
+        titleStyle.background = null;
+        titleStyle.fontColor = isVictory() ? Color.valueOf("fff27c") : Color.valueOf("f88c8c");
+
+        Label titleLabel = new Label(getResultTitle(), titleStyle);
+        titleLabel.setAlignment(Align.center);
+        titleLabel.setFontScale(1.5f);
+        titleLabel.setWrap(true);
+        return titleLabel;
     }
 
     private void populateScoreRows(Table table) {
         List<Message.PlayerScore> scores = getSortedScores();
         String surviveText = formatSurviveTime(payload != null ? payload.getSurviveTime() : 0);
         if (scores.isEmpty()) {
-            Label empty = new Label("暂无成绩", skin, "default_32");
+            Label empty = new Label("暂无信息", skin, "default_32");
+            empty.setFontScale(1.5f);
             table.add(empty).left();
             return;
         }
@@ -139,11 +161,14 @@ public class GameOverScreen implements Screen {
             String fullName = score.getPlayerName();
             String shortName = abbreviateName(fullName);
             Label nameLabel = new Label(shortName + ": ", skin, "default_36");
+            nameLabel.setFontScale(1.5f);
             attachTooltip(nameLabel, fullName);
 
             long scoreValue = Integer.toUnsignedLong(score.getDamageDealt());
             Label scoreLabel = new Label(String.valueOf(scoreValue), skin, "default_36");
+            scoreLabel.setFontScale(1.5f);
             Label surviveLabel = new Label(surviveText, skin, "default_36");
+            surviveLabel.setFontScale(1.5f);
 
             row.add(nameLabel);
             row.add(scoreLabel);
@@ -174,7 +199,7 @@ public class GameOverScreen implements Screen {
     }
 
     private String getResultTitle() {
-        return isVictory() ? "游戏结束" : "下次努力";
+        return isVictory() ? "恭喜通关" : "下次再战";
     }
 
     private String abbreviateName(String raw) {
@@ -198,7 +223,6 @@ public class GameOverScreen implements Screen {
             @Override
             public void enter(InputEvent event, float x, float y, int pointer, Actor fromActor) {
                 tooltipLabel.setText(fullName);
-                tooltipLabel.pack();
                 tooltipLabel.setVisible(true);
                 updateTooltipPosition();
             }
@@ -229,9 +253,10 @@ public class GameOverScreen implements Screen {
         if (stage == null || tooltipLabel == null || !tooltipLabel.isVisible()) {
             return;
         }
-        tooltipStageCoords.set(Gdx.input.getX(), Gdx.input.getY());
-        stage.screenToStageCoordinates(tooltipStageCoords);
-        tooltipLabel.setPosition(tooltipStageCoords.x + 20f, tooltipStageCoords.y + 20f);
+        tooltipStageCoords.set(
+                (stage.getWidth() - tooltipLabel.getWidth()) * 0.5f,
+                (stage.getHeight() - tooltipLabel.getHeight()) * 0.5f);
+        tooltipLabel.setPosition(tooltipStageCoords.x, tooltipStageCoords.y);
     }
 
     private Texture loadTextureOrFallback(String path, Color fallbackColor, int width, int height) {
@@ -265,10 +290,9 @@ public class GameOverScreen implements Screen {
         } else {
             style = new Label.LabelStyle();
         }
-        if (tooltipBackgroundTexture != null) {
-            style.background = new TextureRegionDrawable(new TextureRegion(tooltipBackgroundTexture));
-        }
+        style.background = null;
         Label tooltip = new Label("", style);
+        tooltip.setSize(500f, 500f);
         tooltip.setAlignment(Align.center);
         tooltip.setVisible(false);
         return tooltip;
@@ -315,7 +339,6 @@ public class GameOverScreen implements Screen {
         disposeTexture(backgroundTexture);
         disposeTexture(victoryIconTexture);
         disposeTexture(defeatIconTexture);
-        disposeTexture(tooltipBackgroundTexture);
     }
 
     private void disposeTexture(Texture texture) {
@@ -324,6 +347,3 @@ public class GameOverScreen implements Screen {
         }
     }
 }
-
-
-
