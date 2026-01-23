@@ -463,6 +463,12 @@ public class Main extends Game {
                 case MSG_S2C_ROOM_UPDATE:
                     Message.S2C_RoomUpdate update = (Message.S2C_RoomUpdate) message;
                     if (!(getScreen() instanceof GameRoomScreen)) {
+                        if (getScreen() instanceof GameScreen || getScreen() instanceof GameOverScreen) {
+                            // 游戏进行中/结算中不自动切回房间，避免打断流程
+                            log.debug("Ignore ROOM_UPDATE while in game view (roomId={})",
+                                    update.getRoomId());
+                            break;
+                        }
                         // 自动进入游戏房间界面
                         setScreen(new GameRoomScreen(Main.this, skin));
                     }
