@@ -165,6 +165,7 @@ public class GameScreen implements Screen {
     private boolean idleAckSent = true;
     private boolean autoAttackToggle = true;
     private boolean hasShownGameOver = false;
+    private boolean isSelfAlive = true;
     private float autoAttackAccumulator = AUTO_ATTACK_INTERVAL;
     private float autoAttackHoldTimer = 0f;
     private int lockedEnemyId = 0;
@@ -258,6 +259,7 @@ public class GameScreen implements Screen {
         displayPosition.set(predictedPosition);
         resetInitialStateTracking();
         resetAutoAttackState();
+        isSelfAlive = true;
     }
 
     @Override
@@ -343,7 +345,9 @@ public class GameScreen implements Screen {
         /*
         娓叉煋鏈湴鐜╁瑙掕壊
          */
-        drawCharacterFrame(currentFrame, displayPosition.x, displayPosition.y, facingRight);
+        if (isSelfAlive) {
+            drawCharacterFrame(currentFrame, displayPosition.x, displayPosition.y, facingRight);
+        }
         renderStatusToast(renderDelta);
 
         batch.end();
@@ -527,6 +531,10 @@ public class GameScreen implements Screen {
         //閬嶅巻姣忎釜鐜╁鐨勫揩鐓?
          for(Map.Entry<Integer, Deque<ServerPlayerSnapshot>> entry : remotePlayerServerSnapshots.entrySet()) {
             int playerId = entry.getKey();
+            Message.PlayerState state = serverPlayerStates.get(playerId);
+            if (state != null && !state.getIsAlive()) {
+                continue;
+            }
             Deque<ServerPlayerSnapshot> snapshots = entry.getValue();
             if (snapshots == null || snapshots.isEmpty()) {
                 continue;
@@ -1403,9 +1411,14 @@ public class GameScreen implements Screen {
                 serverPlayerStates.put(playerId, player);
                 //鏈湴鐜╁,娲荤潃鎵嶅鐞?
                 if (playerId == myId) {
-                    if (player.getIsAlive()) {
+                    isSelfAlive = player.getIsAlive();
+                    if (isSelfAlive) {
                         selfStateFromServer = player;
                     }
+                    continue;
+                }
+                if (!player.getIsAlive()) {
+                    removeRemotePlayerData(playerId);
                     continue;
                 }
                 //杩滅▼鐜╁--璁板綍蹇収
@@ -1552,6 +1565,13 @@ public class GameScreen implements Screen {
         remoteFacingRight.put(playerId, faceRight);
     }
 
+    private void removeRemotePlayerData(int playerId) {
+        remotePlayerServerSnapshots.remove(playerId);
+        remotePlayerLastSeen.remove(playerId);
+        remoteFacingRight.remove(playerId);
+        remoteDisplayPositions.remove(playerId);
+    }
+
     /**
      * 娓呯悊闀挎椂闂存湭鏀跺埌娑堟伅鐨勮繃鏈熺帺瀹?     * @param currentServerTimeMs
      */
@@ -1563,9 +1583,7 @@ public class GameScreen implements Screen {
             if ((currentServerTimeMs - lastSeen) > REMOTE_PLAYER_TIMEOUT_MS) {
                 int playerId = entry.getKey();
                 iterator.remove();
-                remotePlayerServerSnapshots.remove(playerId);
-                remoteFacingRight.remove(playerId);
-                remoteDisplayPositions.remove(playerId);
+                removeRemotePlayerData(playerId);
                 serverPlayerStates.remove(playerId);
             }
         }
@@ -2202,10 +2220,6 @@ public class GameScreen implements Screen {
     }
 
     private boolean resolveAttackingState(float delta) {
-        if (Gdx.input.isKeyPressed(Input.Keys.SPACE)) {
-            autoAttackHoldTimer = AUTO_ATTACK_HOLD_TIME;
-            return true;
-        }
         if (!autoAttackToggle) {
             return false;
         }
@@ -2407,5 +2421,3 @@ public class GameScreen implements Screen {
         return "鍔犺浇涓?..锛堢 " + Math.max(1, initialStateRequestCount) + " 娆¤姹傦級";
     }
 }
-
-
