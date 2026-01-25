@@ -22,6 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class Main extends Game {
     private static final Logger log = LoggerFactory.getLogger(Main.class);
     private static final int LOGIN_RESULT_SESSION_TOKEN_FIELD_NUMBER = 4;
+    // 客户端构建标识，用于确认版本
+    private static final String CLIENT_BUILD_VERSION = "2026-01-24-rot-log";
     private Skin skin;
     private TcpClient tcpClient;
     private UdpClient udpClient;
@@ -40,6 +42,7 @@ public class Main extends Game {
 
     @Override
     public void create() {
+        Gdx.app.log("ClientVersion", "客户端版本: " + CLIENT_BUILD_VERSION);
         //使用自定义 PVZ 风格皮肤
         skin = PvzSkin.create();
 

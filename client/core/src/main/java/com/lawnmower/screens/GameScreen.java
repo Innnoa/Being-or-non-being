@@ -803,6 +803,7 @@ public class GameScreen implements Screen {
         if (sample != null) {
             builder.append(" samplePos=").append(sample.position)
                     .append(" sampleVel=").append(sample.velocity)
+                    .append(" sampleRot=").append(sample.rotationDeg)
                     .append(" ttl(ms)=").append(sample.expireClientTimeMs - logicalTimeMs);
         }
         Gdx.app.log(TAG, builder.toString());
@@ -1769,41 +1770,37 @@ public class GameScreen implements Screen {
             }
             long projectileId = Integer.toUnsignedLong(state.getProjectileId());
             ProjectileView view = new ProjectileView(projectileId);
-            Vector2 targetPosition = projectileTempVector;
-            if (state.hasPosition()) {
-                setVectorFromProto(state.getPosition(), targetPosition);
+            Vector2 spawnPosition = projectileTempVector;
+            boolean hasSpawnPosition = state.hasPosition();
+            if (hasSpawnPosition) {
+                setVectorFromProto(state.getPosition(), spawnPosition);
             } else {
-                targetPosition.set(displayPosition);
+                spawnPosition.set(displayPosition);
             }
             Vector2 originPosition = projectileOriginBuffer;
-            resolveProjectileOrigin(state, targetPosition, originPosition);
+            if (hasSpawnPosition) {
+                // 以服务端下发的出生点为权威位置
+                originPosition.set(spawnPosition);
+            } else {
+                resolveProjectileOrigin(state, spawnPosition, originPosition);
+            }
             view.position.set(originPosition);
             float rotationDeg = state.getRotation();
             view.rotationDeg = rotationDeg;
             float serverSpeed = state.hasProjectile() ? state.getProjectile().getSpeed() : 0f;
             float appliedSpeed = PEA_PROJECTILE_SPEED > 0f ? PEA_PROJECTILE_SPEED : serverSpeed;
             Vector2 direction = projectileDirectionBuffer;
-            direction.set(targetPosition).sub(originPosition);
-            float travelDistance = direction.len();
-            if (travelDistance > 0.001f) {
-                direction.scl(1f / travelDistance);
+            // 方向使用服务端计算的 rotation，避免客户端二次推算带来偏差
+            float dirX = MathUtils.cosDeg(rotationDeg);
+            float dirY = MathUtils.sinDeg(rotationDeg);
+            direction.set(dirX, dirY);
+            if (direction.isZero(0.001f)) {
+                direction.set(1f, 0f);
             } else {
-                float dirX = MathUtils.cosDeg(rotationDeg);
-                float dirY = MathUtils.sinDeg(rotationDeg);
-                direction.set(dirX, dirY);
-                if (direction.isZero(0.001f)) {
-                    direction.set(1f, 0f);
-                } else {
-                    direction.nor();
-                }
-                travelDistance = Math.max(0f, appliedSpeed * state.getTtlMs() / 1000f);
+                direction.nor();
             }
             view.velocity.set(direction).scl(appliedSpeed);
             long ttlMs = Math.max(50L, state.getTtlMs());
-            if (travelDistance > 0.001f && appliedSpeed > 0f) {
-                long travelTtl = (long) Math.ceil((travelDistance / appliedSpeed) * 1000f);
-                ttlMs = Math.max(ttlMs, travelTtl);
-            }
             ttlMs = Math.max(50L, ttlMs);
             view.spawnServerTimeMs = serverTimeMs;
             view.expireServerTimeMs = serverTimeMs + ttlMs;
@@ -1814,6 +1811,7 @@ public class GameScreen implements Screen {
             Gdx.app.log(TAG, "ProjectileSpawn id=" + projectileId
                     + " pos=" + view.position
                     + " vel=" + view.velocity
+                    + " rot=" + rotationDeg
                     + " speed=" + appliedSpeed
                     + " ttlMs=" + ttlMs
                     + " serverTime=" + serverTimeMs

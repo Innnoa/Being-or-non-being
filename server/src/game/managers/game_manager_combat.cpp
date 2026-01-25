@@ -15,6 +15,10 @@ constexpr double kMinEnemyAttackIntervalSeconds = 0.05;
 constexpr double kMaxEnemyAttackIntervalSeconds = 10.0;
 constexpr double kPlayerTargetRefreshIntervalSeconds = 0.2;
 constexpr uint64_t kAttackDirFallbackLogIntervalTicks = 60;
+constexpr uint64_t kProjectileSpawnLogIntervalTicks = 60;
+// 射弹嘴部偏移（基于玩家中心点）
+constexpr float kProjectileMouthOffsetUp = 18.0f;
+constexpr float kProjectileMouthOffsetSide = 36.0f;
 
 // 默认射速 clamp（若配置缺失/非法则回退）
 constexpr double kMinAttackIntervalSeconds = 0.05;  // 射速上限（最小间隔，秒）
@@ -30,6 +34,29 @@ bool CirclesOverlap(float ax, float ay, float ar, float bx, float by,
                     float br) {
   const float r = ar + br;
   return DistanceSq(ax, ay, bx, by) <= r * r;
+}
+
+// 线段与圆是否相交（用于连续碰撞检测，避免高速穿透）
+bool SegmentCircleOverlap(float ax, float ay, float bx, float by, float cx,
+                          float cy, float radius, float* out_t) {
+  const float dx = bx - ax;
+  const float dy = by - ay;
+  const float len_sq = dx * dx + dy * dy;
+  float t = 0.0f;
+  if (len_sq > 1e-6f) {
+    t = ((cx - ax) * dx + (cy - ay) * dy) / len_sq;
+    t = std::clamp(t, 0.0f, 1.0f);
+  }
+  const float closest_x = ax + dx * t;
+  const float closest_y = ay + dy * t;
+  const float dist_sq = DistanceSq(closest_x, closest_y, cx, cy);
+  if (dist_sq <= radius * radius) {
+    if (out_t != nullptr) {
+      *out_t = t;
+    }
+    return true;
+  }
+  return false;
 }
 
 double PlayerAttackIntervalSeconds(uint32_t attack_speed, double min_interval,
@@ -102,11 +129,6 @@ void GameManager::ProcessCombatAndProjectiles(
   const float projectile_radius = std::clamp(
       config_.projectile_radius > 0.0f ? config_.projectile_radius : 6.0f, 0.5f,
       128.0f);
-  const float projectile_muzzle_offset =
-      std::clamp(config_.projectile_muzzle_offset >= 0.0f
-                     ? config_.projectile_muzzle_offset
-                     : 22.0f,
-                 0.0f, 256.0f);
   const double projectile_ttl_seconds =
       std::clamp(config_.projectile_ttl_seconds > 0.0f
                      ? static_cast<double>(config_.projectile_ttl_seconds)
@@ -143,6 +165,15 @@ void GameManager::ProcessCombatAndProjectiles(
     }
     const float angle_rad = std::atan2(dir_y, dir_x);
     return angle_rad * 180.0f / std::numbers::pi_v<float>;
+  };
+
+  auto compute_projectile_origin =
+      [&](const PlayerRuntime& player, float facing_dir_x)
+      -> std::pair<float, float> {
+    const float side =
+        facing_dir_x >= 0.0f ? kProjectileMouthOffsetSide : -kProjectileMouthOffsetSide;
+    return {player.state.position().x() + side,
+            player.state.position().y() + kProjectileMouthOffsetUp};
   };
 
   auto find_nearest_enemy_id = [&](const PlayerRuntime& player) -> uint32_t {
@@ -215,6 +246,24 @@ void GameManager::ProcessCombatAndProjectiles(
                   player.state.player_id(), target_id, reason);
   };
 
+  // 低频射弹调试日志
+  auto log_projectile_spawn =
+      [&](PlayerRuntime& player, uint32_t projectile_id,
+          const EnemyRuntime& target, float origin_x, float origin_y,
+          float dir_x, float dir_y, float rotation) {
+    if (scene.tick < player.last_projectile_spawn_log_tick +
+                         kProjectileSpawnLogIntervalTicks) {
+      return;
+    }
+    player.last_projectile_spawn_log_tick = scene.tick;
+    spdlog::debug(
+        "Projectile spawn: tick={} player={} projectile={} origin=({:.2f},{:.2f}) "
+        "target={} target_pos=({:.2f},{:.2f}) dir=({:.3f},{:.3f}) rot={:.2f}",
+        scene.tick, player.state.player_id(), projectile_id, origin_x, origin_y,
+        target.state.enemy_id(), target.state.position().x(),
+        target.state.position().y(), dir_x, dir_y, rotation);
+  };
+
   auto resolve_projectile_direction =
       [&](PlayerRuntime& player, const EnemyRuntime& target, float* out_dir_x,
           float* out_dir_y, float* out_rotation) -> bool {
@@ -225,31 +274,44 @@ void GameManager::ProcessCombatAndProjectiles(
 
     const float px = player.state.position().x();
     const float py = player.state.position().y();
-    float dir_x = target.state.position().x() - px;
-    float dir_y = target.state.position().y() - py;
-    const float len_sq = dir_x * dir_x + dir_y * dir_y;
-    if (len_sq <= 1e-6f) {
+    float facing_dir_x = target.state.position().x() - px;
+    float facing_dir_y = target.state.position().y() - py;
+    const float facing_len_sq =
+        facing_dir_x * facing_dir_x + facing_dir_y * facing_dir_y;
+    if (facing_len_sq <= 1e-6f) {
       if (player.has_attack_dir) {
-        *out_dir_x = player.last_attack_dir_x;
-        *out_dir_y = player.last_attack_dir_y;
-        *out_rotation = player.last_attack_rotation;
+        facing_dir_x = player.last_attack_dir_x;
+        facing_dir_y = player.last_attack_dir_y;
         log_attack_dir_fallback(player, target.state.enemy_id(),
                                 "zero_dir_use_cached");
       } else {
         const auto [fallback_x, fallback_y] =
             rotation_dir(player.state.rotation());
-        *out_dir_x = fallback_x;
-        *out_dir_y = fallback_y;
-        *out_rotation = player.state.rotation();
+        facing_dir_x = fallback_x;
+        facing_dir_y = fallback_y;
         log_attack_dir_fallback(player, target.state.enemy_id(),
                                 "zero_dir_use_player_rotation");
       }
-      return true;
+    } else {
+      const float inv_len = 1.0f / std::sqrt(facing_len_sq);
+      facing_dir_x *= inv_len;
+      facing_dir_y *= inv_len;
     }
 
-    const float inv_len = 1.0f / std::sqrt(len_sq);
-    dir_x *= inv_len;
-    dir_y *= inv_len;
+    const auto [origin_x, origin_y] =
+        compute_projectile_origin(player, facing_dir_x);
+    float dir_x = target.state.position().x() - origin_x;
+    float dir_y = target.state.position().y() - origin_y;
+    const float len_sq = dir_x * dir_x + dir_y * dir_y;
+    if (len_sq <= 1e-6f) {
+      dir_x = facing_dir_x;
+      dir_y = facing_dir_y;
+    } else {
+      const float inv_len = 1.0f / std::sqrt(len_sq);
+      dir_x *= inv_len;
+      dir_y *= inv_len;
+    }
+
     *out_dir_x = dir_x;
     *out_dir_y = dir_y;
     *out_rotation = rotation_from_dir(dir_x, dir_y);
@@ -261,15 +323,12 @@ void GameManager::ProcessCombatAndProjectiles(
   };
 
   auto spawn_projectile = [&](uint32_t owner_player_id, PlayerRuntime& player,
-                              int32_t damage, float dir_x, float dir_y,
-                              float rotation) {
+                              const EnemyRuntime& target, int32_t damage,
+                              float dir_x, float dir_y, float rotation) {
     if (damage <= 0) {
       return;
     }
-    const float start_x =
-        player.state.position().x() + dir_x * projectile_muzzle_offset;
-    const float start_y =
-        player.state.position().y() + dir_y * projectile_muzzle_offset;
+    const auto [start_x, start_y] = compute_projectile_origin(player, dir_x);
 
     ProjectileRuntime proj;
     proj.projectile_id = scene.next_projectile_id++;
@@ -287,6 +346,8 @@ void GameManager::ProcessCombatAndProjectiles(
     proj.remaining_seconds = projectile_ttl_seconds;
 
     scene.projectiles.emplace(proj.projectile_id, proj);
+    log_projectile_spawn(player, proj.projectile_id, target, start_x, start_y,
+                         dir_x, dir_y, rotation);
 
     lawnmower::ProjectileState spawn;
     spawn.set_projectile_id(proj.projectile_id);
@@ -346,7 +407,8 @@ void GameManager::ProcessCombatAndProjectiles(
         }
       }
 
-      spawn_projectile(player_id, player, damage, dir_x, dir_y, rotation);
+      spawn_projectile(player_id, player, *target, damage, dir_x, dir_y,
+                       rotation);
     }
   }
 
@@ -357,44 +419,59 @@ void GameManager::ProcessCombatAndProjectiles(
   for (auto it = scene.projectiles.begin(); it != scene.projectiles.end();) {
     ProjectileRuntime& proj = it->second;
     proj.remaining_seconds -= dt_seconds;
-    proj.x +=
-        proj.dir_x * proj.speed * static_cast<float>(std::max(0.0, dt_seconds));
-    proj.y +=
-        proj.dir_y * proj.speed * static_cast<float>(std::max(0.0, dt_seconds));
+    const float prev_x = proj.x;
+    const float prev_y = proj.y;
+    const float delta_seconds =
+        static_cast<float>(std::max(0.0, dt_seconds));
+    const float next_x = prev_x + proj.dir_x * proj.speed * delta_seconds;
+    const float next_y = prev_y + proj.dir_y * proj.speed * delta_seconds;
+    proj.x = next_x;
+    proj.y = next_y;
 
     bool despawn = false;
     lawnmower::ProjectileDespawnReason reason =
         lawnmower::PROJECTILE_DESPAWN_UNKNOWN;
     uint32_t hit_enemy_id = 0;
+    EnemyRuntime* hit_enemy = nullptr;
 
     if (proj.remaining_seconds <= 0.0) {
       despawn = true;
       reason = lawnmower::PROJECTILE_DESPAWN_EXPIRED;
-    } else if (proj.x < 0.0f || proj.y < 0.0f || proj.x > map_w ||
-               proj.y > map_h) {
-      despawn = true;
-      reason = lawnmower::PROJECTILE_DESPAWN_OUT_OF_BOUNDS;
     } else {
+      const float combined_radius = projectile_radius + kEnemyCollisionRadius;
+      float best_t = std::numeric_limits<float>::infinity();
       for (auto& [enemy_id, enemy] : scene.enemies) {
         if (!enemy.state.is_alive()) {
           continue;
         }
         const float ex = enemy.state.position().x();
         const float ey = enemy.state.position().y();
-        if (!CirclesOverlap(proj.x, proj.y, projectile_radius, ex, ey,
-                            kEnemyCollisionRadius)) {
+        float hit_t = 0.0f;
+        if (!SegmentCircleOverlap(prev_x, prev_y, next_x, next_y, ex, ey,
+                                  combined_radius, &hit_t)) {
           continue;
         }
+        if (hit_t < best_t) {
+          best_t = hit_t;
+          hit_enemy = &enemy;
+          hit_enemy_id = enemy_id;
+        }
+      }
 
-        hit_enemy_id = enemy_id;
+      if (hit_enemy != nullptr) {
+        const float hit_x = prev_x + (next_x - prev_x) * best_t;
+        const float hit_y = prev_y + (next_y - prev_y) * best_t;
+        proj.x = hit_x;
+        proj.y = hit_y;
         despawn = true;
         reason = lawnmower::PROJECTILE_DESPAWN_HIT;
 
-        const int32_t prev_hp = enemy.state.health();
+        const int32_t prev_hp = hit_enemy->state.health();
         const int32_t dealt =
             std::min(proj.damage, std::max<int32_t>(0, prev_hp));
-        enemy.state.set_health(std::max<int32_t>(0, prev_hp - proj.damage));
-        enemy.dirty = true;
+        hit_enemy->state.set_health(
+            std::max<int32_t>(0, prev_hp - proj.damage));
+        hit_enemy->dirty = true;
         *has_dirty = true;
 
         auto owner_it = scene.players.find(proj.owner_player_id);
@@ -402,38 +479,41 @@ void GameManager::ProcessCombatAndProjectiles(
           owner_it->second.damage_dealt += dealt;
         }
 
-        if (enemy.state.health() <= 0) {
-          enemy.state.set_is_alive(false);
-          if (enemy.is_attacking || enemy.attack_target_player_id != 0) {
-            enemy.is_attacking = false;
-            enemy.attack_target_player_id = 0;
+        if (hit_enemy->state.health() <= 0) {
+          hit_enemy->state.set_is_alive(false);
+          if (hit_enemy->is_attacking ||
+              hit_enemy->attack_target_player_id != 0) {
+            hit_enemy->is_attacking = false;
+            hit_enemy->attack_target_player_id = 0;
             lawnmower::EnemyAttackStateDelta delta;
-            delta.set_enemy_id(enemy.state.enemy_id());
+            delta.set_enemy_id(hit_enemy->state.enemy_id());
             delta.set_is_attacking(false);
             delta.set_target_player_id(0);
             enemy_attack_states->push_back(std::move(delta));
           }
-          enemy.dead_elapsed_seconds = 0.0;
-          enemy.force_sync_left =
-              std::max(enemy.force_sync_left, kEnemySpawnForceSyncCount);
-          enemy.dirty = true;
+          hit_enemy->dead_elapsed_seconds = 0.0;
+          hit_enemy->force_sync_left =
+              std::max(hit_enemy->force_sync_left, kEnemySpawnForceSyncCount);
+          hit_enemy->dirty = true;
 
           lawnmower::S2C_EnemyDied died;
-          died.set_enemy_id(enemy.state.enemy_id());
+          died.set_enemy_id(hit_enemy->state.enemy_id());
           died.set_killer_player_id(proj.owner_player_id);
-          died.set_wave_id(enemy.state.wave_id());
-          *died.mutable_position() = enemy.state.position();
+          died.set_wave_id(hit_enemy->state.wave_id());
+          *died.mutable_position() = hit_enemy->state.position();
           enemy_dieds->push_back(std::move(died));
 
           if (owner_it != scene.players.end()) {
             owner_it->second.kill_count += 1;
             const uint32_t exp_reward = static_cast<uint32_t>(std::max<int32_t>(
-                0, ResolveEnemyType(enemy.state.type_id()).exp_reward));
+                0, ResolveEnemyType(hit_enemy->state.type_id()).exp_reward));
             grant_exp(owner_it->second, exp_reward);
           }
         }
-
-        break;  // 单体射弹：命中一个目标即消失
+      } else if (proj.x < 0.0f || proj.y < 0.0f || proj.x > map_w ||
+                 proj.y > map_h) {
+        despawn = true;
+        reason = lawnmower::PROJECTILE_DESPAWN_OUT_OF_BOUNDS;
       }
     }
 
