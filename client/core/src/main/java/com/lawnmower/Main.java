@@ -45,7 +45,7 @@ public class Main extends Game {
         Gdx.app.log("ClientVersion", "客户端版本: " + CLIENT_BUILD_VERSION);
         //使用自定义 PVZ 风格皮肤
         skin = PvzSkin.create();
-
+        
         // 初始化 TCP 客户端（连接本地服务器）
         try {
             tcpClient = new TcpClient();

@@ -19,9 +19,10 @@ import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.TimeUtils;
 import com.badlogic.gdx.utils.viewport.FitViewport;
+import com.lawnmower.Config;
+import com.lawnmower.Main;
 import com.lawnmower.enemies.EnemyDefinitions;
 import com.lawnmower.enemies.EnemyView;
-import com.lawnmower.Main;
 import com.lawnmower.players.PlayerInputCommand;
 import com.lawnmower.players.PlayerStateSnapshot;
 import com.lawnmower.players.ServerPlayerSnapshot;
@@ -60,6 +61,8 @@ public class GameScreen implements Screen {
     private static final float AUTO_ATTACK_HOLD_TIME = 0.18f;
     private static final float TARGET_REFRESH_INTERVAL = 0.2f;
     private static final float PEA_PROJECTILE_SPEED = 200f;
+    // 服务器下发的 type_id 比配置文件的下标大 1，需要在取贴图时减去该偏移
+    private static final int ITEM_TYPE_ID_OFFSET = 1;
 
     private static final int MAX_UNCONFIRMED_INPUTS = 240;
     private static final long MAX_UNCONFIRMED_INPUT_AGE_MS = 1500L;
@@ -96,6 +99,11 @@ public class GameScreen implements Screen {
     private final Map<Long, ProjectileView> projectileViews = new HashMap<>();
     private final Array<ProjectileImpact> projectileImpacts = new Array<>();
     private final Vector2 targetingBuffer = new Vector2();
+    private final Map<Integer, Message.ItemState> itemStateCache = new HashMap<>();
+    private final Map<Integer, ItemView> itemViews = new HashMap<>();
+    private final Map<Integer, TextureRegion> itemTextureRegions = new HashMap<>();
+    private final Map<Integer, Texture> itemTextureHandles = new HashMap<>();
+    private final Vector2 itemPositionBuffer = new Vector2();
 
     private Main game;
     private OrthographicCamera camera;
@@ -111,6 +119,8 @@ public class GameScreen implements Screen {
     private final Map<String, TextureAtlas> enemyAtlasCache = new HashMap<>();
     private Texture enemyFallbackTexture;
     private TextureRegion enemyFallbackRegion;
+    private Texture itemFallbackTexture;
+    private TextureRegion itemFallbackRegion;
     private TextureAtlas projectileAtlas;
     private Animation<TextureRegion> projectileAnimation;
     private Texture projectileFallbackTexture;
@@ -251,6 +261,7 @@ public class GameScreen implements Screen {
         enemyLastSeen.clear();
         projectileViews.clear();
         projectileImpacts.clear();
+        clearItemState();
         resetTargetingState();
         spawnPlaceholderEnemy();
 
@@ -261,10 +272,87 @@ public class GameScreen implements Screen {
         resetAutoAttackState();
         isSelfAlive = true;
     }
+    /**
+     * 閬撳叿鐘舵€佸悓姝?
+     * @param items
+     */
+    private void syncItemViews(Collection<Message.ItemState> items) {
+        if (items == null) {
+            return;
+        }
+        if (items.isEmpty()) {
+            clearItemState();
+            return;
+        }
+        Set<Integer> seenIds = new HashSet<>(items.size());
+        for (Message.ItemState itemState : items) {
+            if (itemState == null) {
+                continue;
+            }
+            int itemId = (int) itemState.getItemId();
+            seenIds.add(itemId);
+            applyItemState(itemState);
+        }
+        Iterator<Map.Entry<Integer, ItemView>> iterator = itemViews.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<Integer, ItemView> entry = iterator.next();
+            if (!seenIds.contains(entry.getKey())) {
+                iterator.remove();
+                itemStateCache.remove(entry.getKey());
+            }
+        }
+    }
 
-    @Override
+    private void applyItemState(Message.ItemState itemState) {
+        if (itemState == null) {
+            return;
+        }
+        int itemId = (int) itemState.getItemId();
+        itemStateCache.put(itemId, itemState);
+        if (itemState.getIsPicked()) {
+            itemViews.remove(itemId);
+            return;
+        }
+        if (!itemState.hasPosition()) {
+            return;
+        }
+        setVectorFromProto(itemState.getPosition(), itemPositionBuffer);
+        clampPositionToMap(itemPositionBuffer);
+        TextureRegion region = resolveItemTexture((int) itemState.getTypeId());
+        if (region == null) {
+            region = getItemFallbackRegion();
+        }
+        ItemView view = itemViews.computeIfAbsent(itemId, ItemView::new);
+        view.update(region, itemPositionBuffer, (int) itemState.getTypeId(), itemState.getEffectType());
+    }
+
+    /**
+     * 绘制当前场景中的道具
+     * @param delta
+     */
+    private void renderItems(float delta) {
+        if (batch == null || itemViews.isEmpty()) {
+            return;
+        }
+        for (ItemView view : itemViews.values()) {
+            if (view == null) {
+                continue;
+            }
+            TextureRegion region = view.region != null ? view.region : getItemFallbackRegion();
+            if (region == null) {
+                continue;
+            }
+            float width = region.getRegionWidth();
+            float height = region.getRegionHeight();
+            float drawX = view.position.x - width / 2f;
+            float drawY = view.position.y - height / 2f;
+            batch.draw(region, drawX, drawY, width, height);
+        }
+    }
+
     /**
     娓告垙涓诲惊鐜?     */
+    @Override
     public void render(float delta) {
         advanceLogicalClock(delta);//鏇存柊涓€涓ǔ瀹氱殑鏃堕棿璺冲彉
         pumpPendingNetworkInput();
@@ -318,6 +406,7 @@ public class GameScreen implements Screen {
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         batch.draw(backgroundTexture, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+        renderItems(renderDelta);
         /*
         鎾斁鐜╁绌洪棽鍔ㄧ敾
          */
@@ -810,6 +899,30 @@ public class GameScreen implements Screen {
     }
 
     /**
+     * 閬撳叿鍥惧儚鐨勮鍥惧鍊?
+     */
+    private static final class ItemView {
+        final int itemId;
+        final Vector2 position = new Vector2();
+        TextureRegion region;
+        int typeId;
+        Message.ItemEffectType effectType = Message.ItemEffectType.ITEM_EFFECT_NONE;
+
+        ItemView(int itemId) {
+            this.itemId = itemId;
+        }
+
+        void update(TextureRegion textureRegion, Vector2 sourcePosition, int typeId, Message.ItemEffectType effectType) {
+            if (textureRegion != null) {
+                this.region = textureRegion;
+            }
+            this.position.set(sourcePosition);
+            this.typeId = typeId;
+            this.effectType = effectType;
+        }
+    }
+
+    /**
      * 鎶曞皠鐗╁湪瀹㈡埛绔交閲忕殑瑙嗗浘
      */
     private static final class ProjectileView {
@@ -988,6 +1101,58 @@ public class GameScreen implements Screen {
         }
         return enemyFallbackRegion;
     }
+
+    private TextureRegion resolveItemTexture(int serverTypeId) {
+        TextureRegion cached = itemTextureRegions.get(serverTypeId);
+        if (cached != null) {
+            return cached;
+        }
+        String texturePath = resolveItemTexturePath(serverTypeId);
+        if (texturePath == null || texturePath.isEmpty()) {
+            return getItemFallbackRegion();
+        }
+        try {
+            Texture texture = new Texture(Gdx.files.internal(texturePath));
+            TextureRegion region = new TextureRegion(texture);
+            itemTextureRegions.put(serverTypeId, region);
+            itemTextureHandles.put(serverTypeId, texture);
+            return region;
+        } catch (Exception e) {
+            Gdx.app.log(TAG, "Failed to load item texture typeId=" + serverTypeId + " path=" + texturePath, e);
+            return getItemFallbackRegion();
+        }
+    }
+
+    private String resolveItemTexturePath(int serverTypeId) {
+        if (Config.PROP_CONFIG == null || Config.PROP_CONFIG.isEmpty()) {
+            return null;
+        }
+        int configIndex = serverTypeId - ITEM_TYPE_ID_OFFSET;
+        if (configIndex < 0 || configIndex >= Config.PROP_CONFIG.size()) {
+            Gdx.app.log(TAG, "Prop texture missing for typeId=" + serverTypeId + " index=" + configIndex);
+            return null;
+        }
+        String path = Config.PROP_CONFIG.get(configIndex);
+        if (path == null || path.isEmpty()) {
+            Gdx.app.log(TAG, "Prop texture path empty for typeId=" + serverTypeId + " index=" + configIndex);
+            return null;
+        }
+        return path;
+    }
+
+    private TextureRegion getItemFallbackRegion() {
+        if (itemFallbackRegion == null) {
+            Pixmap pixmap = new Pixmap(48, 48, Pixmap.Format.RGBA8888);
+            pixmap.setColor(0.95f, 0.82f, 0.28f, 1f);
+            pixmap.fillCircle(24, 24, 20);
+            pixmap.setColor(0.99f, 0.95f, 0.72f, 1f);
+            pixmap.drawCircle(24, 24, 20);
+            itemFallbackTexture = new Texture(pixmap);
+            itemFallbackRegion = new TextureRegion(itemFallbackTexture);
+            pixmap.dispose();
+        }
+        return itemFallbackRegion;
+    }
     /**
      * 娓呯悊鏁屼汉淇℃伅
      */
@@ -1059,6 +1224,21 @@ public class GameScreen implements Screen {
         }
         projectileAnimation = null;
         projectileImpactAnimation = null;
+    }
+
+    private void disposeItemAssets() {
+        for (Texture texture : itemTextureHandles.values()) {
+            if (texture != null) {
+                texture.dispose();
+            }
+        }
+        itemTextureHandles.clear();
+        itemTextureRegions.clear();
+        if (itemFallbackTexture != null) {
+            itemFallbackTexture.dispose();
+            itemFallbackTexture = null;
+            itemFallbackRegion = null;
+        }
     }
 
     /**
@@ -1356,6 +1536,7 @@ public class GameScreen implements Screen {
             syncEnemyViews(sync.getEnemiesList(), sync.getServerTimeMs());
         }
         handlePlayersFromServer(sync.getPlayersList(), sync.getServerTimeMs());
+        syncItemViews(sync.getItemsList());
     }
 
     /**
@@ -2003,6 +2184,9 @@ public class GameScreen implements Screen {
             return;
         }
         showStatusToast("掉落了" + droppedItem.getItemsCount() + " 个战利品");
+        for (Message.ItemState itemState : droppedItem.getItemsList()) {
+            applyItemState(itemState);
+        }
     }
 
     private void handleGameOver(Message.S2C_GameOver gameOver) {
@@ -2015,6 +2199,7 @@ public class GameScreen implements Screen {
         projectileImpacts.clear();
         resetTargetingState();
         resetAutoAttackState();
+        clearItemState();
         if (!hasShownGameOver) {
             hasShownGameOver = true;
             game.setScreen(new GameOverScreen(game, gameOver));
@@ -2026,6 +2211,7 @@ public class GameScreen implements Screen {
         projectileImpacts.clear();
         resetTargetingState();
         resetAutoAttackState();
+        clearItemState();
     }
     /**
      * 娓告垙鐜鐘舵€佺殑鏋氫妇鍒ゆ柇
@@ -2084,6 +2270,7 @@ public class GameScreen implements Screen {
         if (playerAtlas != null) playerAtlas.dispose();
         disposeEnemyAtlases();
         disposeProjectileAssets();
+        disposeItemAssets();
         enemyAnimations.clear();
         if (enemyFallbackTexture != null) {
             enemyFallbackTexture.dispose();
@@ -2093,6 +2280,7 @@ public class GameScreen implements Screen {
         enemyViews.clear();
         projectileViews.clear();
         projectileImpacts.clear();
+        clearItemState();
         if (backgroundTexture != null) backgroundTexture.dispose();
         if (loadingFont != null) {
             loadingFont.dispose();
@@ -2238,6 +2426,11 @@ public class GameScreen implements Screen {
         targetRefreshTimer = TARGET_REFRESH_INTERVAL;
     }
 
+    private void clearItemState() {
+        itemViews.clear();
+        itemStateCache.clear();
+    }
+
     private void updatePlayerFacing(float delta) {
         if (enemyViews.isEmpty()) {
             lockedEnemyId = 0;
@@ -2316,6 +2509,7 @@ public class GameScreen implements Screen {
         initialStateRequestCount = 0;
         lastDeltaResyncRequestMs = 0L;
         resetTargetingState();
+        clearItemState();
         maybeSendInitialStateRequest(initialStateStartMs, "initial_enter");
     }
 
@@ -2419,3 +2613,5 @@ public class GameScreen implements Screen {
         return "鍔犺浇涓?..锛堢 " + Math.max(1, initialStateRequestCount) + " 娆¤姹傦級";
     }
 }
+
+
