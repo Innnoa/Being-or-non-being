@@ -97,6 +97,7 @@ class GameManager {
     float last_attack_dir_y = 0.0f; // 最近攻击方向y向量
     float last_attack_rotation = 0.0f; // 最近攻击朝向角
     uint64_t last_attack_dir_log_tick = 0; // 最近记录攻击方向的tick
+    uint64_t last_projectile_spawn_log_tick = 0; // 最近记录射弹生成信息的tick
     int32_t kill_count = 0; // 击杀数
     int32_t damage_dealt = 0; // 伤害总量
     bool low_freq_dirty = false; // 低频/全量同步字段变化标记

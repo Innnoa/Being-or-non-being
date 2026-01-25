@@ -15,6 +15,10 @@ constexpr double kMinEnemyAttackIntervalSeconds = 0.05;
 constexpr double kMaxEnemyAttackIntervalSeconds = 10.0;
 constexpr double kPlayerTargetRefreshIntervalSeconds = 0.2;
 constexpr uint64_t kAttackDirFallbackLogIntervalTicks = 60;
+constexpr uint64_t kProjectileSpawnLogIntervalTicks = 60;
+// 射弹嘴部偏移（基于玩家中心点）
+constexpr float kProjectileMouthOffsetUp = 18.0f;
+constexpr float kProjectileMouthOffsetSide = 36.0f;
 
 // 默认射速 clamp（若配置缺失/非法则回退）
 constexpr double kMinAttackIntervalSeconds = 0.05;  // 射速上限（最小间隔，秒）
@@ -102,11 +106,6 @@ void GameManager::ProcessCombatAndProjectiles(
   const float projectile_radius = std::clamp(
       config_.projectile_radius > 0.0f ? config_.projectile_radius : 6.0f, 0.5f,
       128.0f);
-  const float projectile_muzzle_offset =
-      std::clamp(config_.projectile_muzzle_offset >= 0.0f
-                     ? config_.projectile_muzzle_offset
-                     : 22.0f,
-                 0.0f, 256.0f);
   const double projectile_ttl_seconds =
       std::clamp(config_.projectile_ttl_seconds > 0.0f
                      ? static_cast<double>(config_.projectile_ttl_seconds)
@@ -143,6 +142,15 @@ void GameManager::ProcessCombatAndProjectiles(
     }
     const float angle_rad = std::atan2(dir_y, dir_x);
     return angle_rad * 180.0f / std::numbers::pi_v<float>;
+  };
+
+  auto compute_projectile_origin =
+      [&](const PlayerRuntime& player, float facing_dir_x)
+      -> std::pair<float, float> {
+    const float side =
+        facing_dir_x >= 0.0f ? kProjectileMouthOffsetSide : -kProjectileMouthOffsetSide;
+    return {player.state.position().x() + side,
+            player.state.position().y() + kProjectileMouthOffsetUp};
   };
 
   auto find_nearest_enemy_id = [&](const PlayerRuntime& player) -> uint32_t {
@@ -215,6 +223,24 @@ void GameManager::ProcessCombatAndProjectiles(
                   player.state.player_id(), target_id, reason);
   };
 
+  // 低频射弹调试日志
+  auto log_projectile_spawn =
+      [&](PlayerRuntime& player, uint32_t projectile_id,
+          const EnemyRuntime& target, float origin_x, float origin_y,
+          float dir_x, float dir_y, float rotation) {
+    if (scene.tick < player.last_projectile_spawn_log_tick +
+                         kProjectileSpawnLogIntervalTicks) {
+      return;
+    }
+    player.last_projectile_spawn_log_tick = scene.tick;
+    spdlog::debug(
+        "Projectile spawn: tick={} player={} projectile={} origin=({:.2f},{:.2f}) "
+        "target={} target_pos=({:.2f},{:.2f}) dir=({:.3f},{:.3f}) rot={:.2f}",
+        scene.tick, player.state.player_id(), projectile_id, origin_x, origin_y,
+        target.state.enemy_id(), target.state.position().x(),
+        target.state.position().y(), dir_x, dir_y, rotation);
+  };
+
   auto resolve_projectile_direction =
       [&](PlayerRuntime& player, const EnemyRuntime& target, float* out_dir_x,
           float* out_dir_y, float* out_rotation) -> bool {
@@ -225,31 +251,44 @@ void GameManager::ProcessCombatAndProjectiles(
 
     const float px = player.state.position().x();
     const float py = player.state.position().y();
-    float dir_x = target.state.position().x() - px;
-    float dir_y = target.state.position().y() - py;
-    const float len_sq = dir_x * dir_x + dir_y * dir_y;
-    if (len_sq <= 1e-6f) {
+    float facing_dir_x = target.state.position().x() - px;
+    float facing_dir_y = target.state.position().y() - py;
+    const float facing_len_sq =
+        facing_dir_x * facing_dir_x + facing_dir_y * facing_dir_y;
+    if (facing_len_sq <= 1e-6f) {
       if (player.has_attack_dir) {
-        *out_dir_x = player.last_attack_dir_x;
-        *out_dir_y = player.last_attack_dir_y;
-        *out_rotation = player.last_attack_rotation;
+        facing_dir_x = player.last_attack_dir_x;
+        facing_dir_y = player.last_attack_dir_y;
         log_attack_dir_fallback(player, target.state.enemy_id(),
                                 "zero_dir_use_cached");
       } else {
         const auto [fallback_x, fallback_y] =
             rotation_dir(player.state.rotation());
-        *out_dir_x = fallback_x;
-        *out_dir_y = fallback_y;
-        *out_rotation = player.state.rotation();
+        facing_dir_x = fallback_x;
+        facing_dir_y = fallback_y;
         log_attack_dir_fallback(player, target.state.enemy_id(),
                                 "zero_dir_use_player_rotation");
       }
-      return true;
+    } else {
+      const float inv_len = 1.0f / std::sqrt(facing_len_sq);
+      facing_dir_x *= inv_len;
+      facing_dir_y *= inv_len;
     }
 
-    const float inv_len = 1.0f / std::sqrt(len_sq);
-    dir_x *= inv_len;
-    dir_y *= inv_len;
+    const auto [origin_x, origin_y] =
+        compute_projectile_origin(player, facing_dir_x);
+    float dir_x = target.state.position().x() - origin_x;
+    float dir_y = target.state.position().y() - origin_y;
+    const float len_sq = dir_x * dir_x + dir_y * dir_y;
+    if (len_sq <= 1e-6f) {
+      dir_x = facing_dir_x;
+      dir_y = facing_dir_y;
+    } else {
+      const float inv_len = 1.0f / std::sqrt(len_sq);
+      dir_x *= inv_len;
+      dir_y *= inv_len;
+    }
+
     *out_dir_x = dir_x;
     *out_dir_y = dir_y;
     *out_rotation = rotation_from_dir(dir_x, dir_y);
@@ -261,15 +300,12 @@ void GameManager::ProcessCombatAndProjectiles(
   };
 
   auto spawn_projectile = [&](uint32_t owner_player_id, PlayerRuntime& player,
-                              int32_t damage, float dir_x, float dir_y,
-                              float rotation) {
+                              const EnemyRuntime& target, int32_t damage,
+                              float dir_x, float dir_y, float rotation) {
     if (damage <= 0) {
       return;
     }
-    const float start_x =
-        player.state.position().x() + dir_x * projectile_muzzle_offset;
-    const float start_y =
-        player.state.position().y() + dir_y * projectile_muzzle_offset;
+    const auto [start_x, start_y] = compute_projectile_origin(player, dir_x);
 
     ProjectileRuntime proj;
     proj.projectile_id = scene.next_projectile_id++;
@@ -287,6 +323,8 @@ void GameManager::ProcessCombatAndProjectiles(
     proj.remaining_seconds = projectile_ttl_seconds;
 
     scene.projectiles.emplace(proj.projectile_id, proj);
+    log_projectile_spawn(player, proj.projectile_id, target, start_x, start_y,
+                         dir_x, dir_y, rotation);
 
     lawnmower::ProjectileState spawn;
     spawn.set_projectile_id(proj.projectile_id);
@@ -346,7 +384,8 @@ void GameManager::ProcessCombatAndProjectiles(
         }
       }
 
-      spawn_projectile(player_id, player, damage, dir_x, dir_y, rotation);
+      spawn_projectile(player_id, player, *target, damage, dir_x, dir_y,
+                       rotation);
     }
   }
 
