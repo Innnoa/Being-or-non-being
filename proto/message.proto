@@ -285,11 +285,10 @@ enum ItemEffectType {
 // 掉落物状态
 message ItemState {
     uint32 item_id = 1;            // 道具实例ID
-    uint32 type_id = 2;            // 道具类型ID（关联 ItemConfig）
+    uint32 type_id = 2;            // 道具类型ID
     Vector2 position = 3;          // 位置
     bool is_picked = 4;            // 是否已被拾取
-    ItemEffectType effect_type = 6; // 道具效果类型
-    reserved 5;                    // 移除 value 字段避免复用
+    ItemEffectType effect_type = 5; // 道具效果类型
 }
 
 // =============================
@@ -467,15 +466,6 @@ message EnemyConfig {
     float speed = 7;               // 移动速度（像素/秒）
     uint32 damage = 8;              // 单次伤害
     uint32 exp_reward = 9;          // 击杀后奖励经验
-}
-
-// 道具配置
-message ItemConfig {
-    uint32 type_id = 1;            // 与 ItemState.type_id 对应
-    string name = 2;
-    string texture_id = 3;         // 贴图资源ID（如 "coin"）
-    string pick_effect_id = 4;     // 拾取特效ID（如 "pick_coin"）
-    uint32 exp_value = 5;           // 若为经验道具，此字段有效
 }
 
 // =============================

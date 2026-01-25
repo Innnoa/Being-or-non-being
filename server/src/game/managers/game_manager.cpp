@@ -610,20 +610,35 @@ void GameManager::ProcessItems(
       items_config_.spawn_interval_seconds > 0.0f
           ? static_cast<double>(items_config_.spawn_interval_seconds)
           : 8.0;
+  std::vector<uint32_t> candidate_type_ids;
+  if (!items_config_.spawn_type_ids.empty()) {
+    candidate_type_ids = items_config_.spawn_type_ids;
+  } else if (items_config_.default_type_id > 0) {
+    candidate_type_ids.push_back(items_config_.default_type_id);
+  }
+  std::vector<uint32_t> heal_type_ids;
+  heal_type_ids.reserve(candidate_type_ids.size());
+  for (const auto type_id : candidate_type_ids) {
+    const ItemTypeConfig& type = ResolveItemType(type_id);
+    if (ResolveItemEffectType(type.effect) == lawnmower::ITEM_EFFECT_HEAL) {
+      heal_type_ids.push_back(type.type_id);
+    }
+  }
+  const bool can_spawn_heal = !heal_type_ids.empty();
 
   scene.item_spawn_elapsed += dt_seconds;
   std::size_t spawned = 0;
-  while (spawn_interval > 0.0 &&
+  while (can_spawn_heal && spawn_interval > 0.0 &&
          scene.item_spawn_elapsed >= spawn_interval &&
          scene.items.size() < max_items_alive &&
          spawned < kMaxItemSpawnPerTick) {
     scene.item_spawn_elapsed -= spawn_interval;
 
     uint32_t type_id = items_config_.default_type_id;
-    if (!items_config_.spawn_type_ids.empty()) {
+    if (!heal_type_ids.empty()) {
       const std::size_t index = static_cast<std::size_t>(
-          NextRng(&scene.rng_state) % items_config_.spawn_type_ids.size());
-      type_id = items_config_.spawn_type_ids[index];
+          NextRng(&scene.rng_state) % heal_type_ids.size());
+      type_id = heal_type_ids[index];
     }
 
     const ItemTypeConfig& type = ResolveItemType(type_id);
