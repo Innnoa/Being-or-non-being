@@ -123,13 +123,6 @@ message SkillConfig {
     string icon_id = 4; // 图标资源ID（如"skill_pea"）
 }
 
-message ItemConfig {
-    uint32 type_id = 1; // 与ItemState.type_id对应
-    string name = 2;
-    string texture_id = 3; // 贴图资源ID（如"coin"）
-    string pick_effect_id = 4; // 拾取特效ID（如"pick_coin"）
-}
-
 // 消息封装
 message Packet {
     uint32 msg_type = 1; // 消息类型（1=登录,2=输入,3=状态同步等）
@@ -179,13 +172,7 @@ message Packet {
 
    - 服务器通过`ItemState.type_id`发送道具类型
 
-   - 客户端通过
-
-     ```
-     ItemConfig
-     ```
-
-     匹配：
+   - 客户端通过本地道具配置表（建议与 items_config.json 同步）匹配：
 
      - 道具贴图：`texture_id`→"textures/items/coin.png"
      - 拾取特效：`pick_effect_id`→"particles/pick_coin.particle"
