@@ -2,6 +2,9 @@ package com.lawnmower;
 
 import com.google.protobuf.ByteString;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+
 public final class Config {
 
     // =============== 网络配置 ===============
@@ -24,4 +27,7 @@ public final class Config {
     // =============== 基础配置 ===============
     private static final String quit = "close_quit";
     public static final ByteString byteString = ByteString.copyFrom(quit.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+    //================ 道具类型 ===============
+    public static final ArrayList<String> PROP_CONFIG = new ArrayList<>(Arrays.asList("background/Fertilizer.png"));
 }
