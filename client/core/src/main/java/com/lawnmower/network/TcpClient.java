@@ -73,6 +73,39 @@ public class TcpClient {
         sendPacket(Message.MessageType.MSG_C2S_START_GAME, msg);
     }
 
+    public void sendUpgradeRequestAck(int roomId, int playerId) throws IOException {
+        var msg = Message.C2S_UpgradeRequestAck.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .build();
+        sendPacket(Message.MessageType.MSG_C2S_UPGRADE_REQUEST_ACK, msg);
+    }
+
+    public void sendUpgradeOptionsAck(int roomId, int playerId) throws IOException {
+        var msg = Message.C2S_UpgradeOptionsAck.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .build();
+        sendPacket(Message.MessageType.MSG_C2S_UPGRADE_OPTIONS_ACK, msg);
+    }
+
+    public void sendUpgradeSelect(int roomId, int playerId, int optionIndex) throws IOException {
+        var msg = Message.C2S_UpgradeSelect.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .setOptionIndex(optionIndex)
+                .build();
+        sendPacket(Message.MessageType.MSG_C2S_UPGRADE_SELECT, msg);
+    }
+
+    public void sendUpgradeRefreshRequest(int roomId, int playerId) throws IOException {
+        var msg = Message.C2S_UpgradeRefreshRequest.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .build();
+        sendPacket(Message.MessageType.MSG_C2S_UPGRADE_REFRESH_REQUEST, msg);
+    }
+
 
     private void writePacket(Message.Packet packet) throws IOException {
         byte[] data = packet.toByteArray();

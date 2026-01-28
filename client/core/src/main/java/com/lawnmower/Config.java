@@ -30,4 +30,8 @@ public final class Config {
 
     //================ 道具类型 ===============
     public static final ArrayList<String> PROP_CONFIG = new ArrayList<>(Arrays.asList("background/Fertilizer.png"));
+
+    //================ 升级配置 ===============
+    public static final ArrayList<String> UPGRADE_LEVEL_CONFIG = new ArrayList<>(Arrays.asList("unknown","low","medium","high"));
+    public static final ArrayList<String> UPGRADE_CONFIG = new ArrayList<>(Arrays.asList("unknown","move_speed","attack","attack_speed","max_health","critical_rate"));
 }

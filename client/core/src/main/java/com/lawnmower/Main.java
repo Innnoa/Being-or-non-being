@@ -4,6 +4,7 @@ import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.scenes.scene2d.ui.Skin;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.MessageLite;
 import com.google.protobuf.UnknownFieldSet;
 
 import com.lawnmower.network.TcpClient;
@@ -115,12 +116,21 @@ public class Main extends Game {
                         case MSG_S2C_PROJECTILE_SPAWN:
                             payload = Message.S2C_ProjectileSpawn.parseFrom(packet.getPayload());
                             break;
-                        case MSG_S2C_PROJECTILE_DESPAWN:
-                            payload = Message.S2C_ProjectileDespawn.parseFrom(packet.getPayload());
-                            break;
-                        case MSG_S2C_ENEMY_ATTACK_STATE_SYNC:
-                            payload = Message.S2C_EnemyAttackStateSync.parseFrom(packet.getPayload());
-                            break;
+        case MSG_S2C_PROJECTILE_DESPAWN:
+            payload = Message.S2C_ProjectileDespawn.parseFrom(packet.getPayload());
+            break;
+        case MSG_S2C_ENEMY_ATTACK_STATE_SYNC:
+            payload = Message.S2C_EnemyAttackStateSync.parseFrom(packet.getPayload());
+            break;
+        case MSG_S2C_UPGRADE_REQUEST:
+            payload = Message.S2C_UpgradeRequest.parseFrom(packet.getPayload());
+            break;
+        case MSG_S2C_UPGRADE_OPTIONS:
+            payload = Message.S2C_UpgradeOptions.parseFrom(packet.getPayload());
+            break;
+        case MSG_S2C_UPGRADE_SELECT_ACK:
+            payload = Message.S2C_UpgradeSelectAck.parseFrom(packet.getPayload());
+            break;
                         // 其他未来消息可继续添加
                         default:
                             Gdx.app.log("NET", "Unknown message type: " + type);
@@ -222,13 +232,19 @@ public class Main extends Game {
                 return Message.S2C_SetReadyResult.parseFrom(packet.getPayload());
             case MSG_S2C_PROJECTILE_SPAWN:
                 return Message.S2C_ProjectileSpawn.parseFrom(packet.getPayload());
-            case MSG_S2C_PROJECTILE_DESPAWN:
-                return Message.S2C_ProjectileDespawn.parseFrom(packet.getPayload());
-            case MSG_S2C_ENEMY_ATTACK_STATE_SYNC:
-                return Message.S2C_EnemyAttackStateSync.parseFrom(packet.getPayload());
-            default:
-                Gdx.app.log("NET", "Unknown message type: " + type);
-                return null;
+        case MSG_S2C_PROJECTILE_DESPAWN:
+            return Message.S2C_ProjectileDespawn.parseFrom(packet.getPayload());
+        case MSG_S2C_ENEMY_ATTACK_STATE_SYNC:
+            return Message.S2C_EnemyAttackStateSync.parseFrom(packet.getPayload());
+        case MSG_S2C_UPGRADE_REQUEST:
+            return Message.S2C_UpgradeRequest.parseFrom(packet.getPayload());
+        case MSG_S2C_UPGRADE_OPTIONS:
+            return Message.S2C_UpgradeOptions.parseFrom(packet.getPayload());
+        case MSG_S2C_UPGRADE_SELECT_ACK:
+            return Message.S2C_UpgradeSelectAck.parseFrom(packet.getPayload());
+        default:
+            Gdx.app.log("NET", "Unknown message type: " + type);
+            return null;
         }
     }
 
@@ -349,6 +365,68 @@ public class Main extends Game {
             Gdx.app.log("NET", "Requested full game state sync (" + tag + ")");
         } catch (IOException e) {
             log.warn("Failed to request game state sync", e);
+        }
+    }
+
+    public boolean sendUpgradeRequestAck(int roomId) {
+        if (!isUpgradeRoomValid(roomId)) {
+            return false;
+        }
+        Message.C2S_UpgradeRequestAck ack = Message.C2S_UpgradeRequestAck.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .build();
+        return sendUpgradePacket(Message.MessageType.MSG_C2S_UPGRADE_REQUEST_ACK, ack);
+    }
+
+    public boolean sendUpgradeOptionsAck(int roomId) {
+        if (!isUpgradeRoomValid(roomId)) {
+            return false;
+        }
+        Message.C2S_UpgradeOptionsAck ack = Message.C2S_UpgradeOptionsAck.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .build();
+        return sendUpgradePacket(Message.MessageType.MSG_C2S_UPGRADE_OPTIONS_ACK, ack);
+    }
+
+    public boolean sendUpgradeSelect(int roomId, int optionIndex) {
+        if (!isUpgradeRoomValid(roomId)) {
+            return false;
+        }
+        Message.C2S_UpgradeSelect select = Message.C2S_UpgradeSelect.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .setOptionIndex(optionIndex)
+                .build();
+        return sendUpgradePacket(Message.MessageType.MSG_C2S_UPGRADE_SELECT, select);
+    }
+
+    public boolean sendUpgradeRefreshRequest(int roomId) {
+        if (!isUpgradeRoomValid(roomId)) {
+            return false;
+        }
+        Message.C2S_UpgradeRefreshRequest request = Message.C2S_UpgradeRefreshRequest.newBuilder()
+                .setRoomId(roomId)
+                .setPlayerId(playerId)
+                .build();
+        return sendUpgradePacket(Message.MessageType.MSG_C2S_UPGRADE_REFRESH_REQUEST, request);
+    }
+
+    private boolean isUpgradeRoomValid(int roomId) {
+        return tcpClient != null && playerId > 0 && roomId > 0;
+    }
+
+    private boolean sendUpgradePacket(Message.MessageType type, MessageLite payload) {
+        if (tcpClient == null || payload == null) {
+            return false;
+        }
+        try {
+            tcpClient.sendPacket(type, payload);
+            return true;
+        } catch (IOException e) {
+            log.warn("Failed to send {}: {}", type, e.getMessage());
+            return false;
         }
     }
 
@@ -535,18 +613,33 @@ public class Main extends Game {
                 case MSG_S2C_GAME_OVER:
                 case MSG_S2C_PROJECTILE_SPAWN:
                 case MSG_S2C_PROJECTILE_DESPAWN:
-                case MSG_S2C_ENEMY_ATTACK_STATE_SYNC:
-                    // 暂时只打日志，后续由 GameScreen 处理
-                    Gdx.app.log("GAME_EVENT", "Received game event: " + type);
-                    if (getScreen() instanceof GameScreen gameScreen) {
-                        gameScreen.onGameEvent(type, message);
-                    }
-                    break;
-                default:
-                    Gdx.app.log("NET", "Unhandled message type: " + type);
+        case MSG_S2C_ENEMY_ATTACK_STATE_SYNC:
+            // 暂时只打日志，后续由 GameScreen 处理
+            Gdx.app.log("GAME_EVENT", "Received game event: " + type);
+            if (getScreen() instanceof GameScreen gameScreen) {
+                gameScreen.onGameEvent(type, message);
             }
-        });
-    }
+            break;
+        case MSG_S2C_UPGRADE_REQUEST:
+            if (getScreen() instanceof GameScreen requestScreen) {
+                requestScreen.onUpgradeRequest((Message.S2C_UpgradeRequest) message);
+            }
+            break;
+        case MSG_S2C_UPGRADE_OPTIONS:
+            if (getScreen() instanceof GameScreen optionsScreen) {
+                optionsScreen.onUpgradeOptions((Message.S2C_UpgradeOptions) message);
+            }
+            break;
+        case MSG_S2C_UPGRADE_SELECT_ACK:
+            if (getScreen() instanceof GameScreen ackScreen) {
+                ackScreen.onUpgradeSelectAck((Message.S2C_UpgradeSelectAck) message);
+            }
+            break;
+        default:
+            Gdx.app.log("NET", "Unhandled message type: " + type);
+        }
+    });
+}
 
     private void deliverRoomUpdate(Message.S2C_RoomUpdate update) {
         if (update == null) {
