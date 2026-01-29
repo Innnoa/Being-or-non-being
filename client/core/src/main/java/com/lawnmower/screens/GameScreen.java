@@ -2607,7 +2607,7 @@ public class GameScreen implements Screen {
         }
         String toast = playerId == game.getPlayerId()
                 ? "浣犲彈鍒颁簡" + hurt.getDamage() + "鐐逛激瀹? 鍓╀綑琛€閲?" + hurt.getRemainingHealth()
-                : "鐜╁ " + playerId + " 鍙楀埌浜?" + hurt.getDamage() + " 鐐逛激瀹?;
+                : "鐜╁ " + playerId + " 鍙楀埌浜?" + hurt.getDamage() + " 鐐逛激瀹?";
         showStatusToast(toast);
         triggerEnemyAttackAnimation(hurt.getSourceId());
     }
@@ -2693,8 +2693,8 @@ public class GameScreen implements Screen {
             lockedEnemyId = 0;
         }
         String toast = died.getKillerPlayerId() > 0
-                ? "宸叉湁鏁屼汉琚? + died.getKillerPlayerId() + "鍑昏触"
-                : "鏁屼汉" + enemyId + " 琚秷鐏?;
+                ? "宸叉湁鏁屼汉琚?" + died.getKillerPlayerId() + "鍑昏触"
+                : "鏁屼汉" + enemyId + " 琚秷鐏?";
         showStatusToast(toast);
     }
 
@@ -2720,7 +2720,7 @@ public class GameScreen implements Screen {
         if (droppedItem == null || droppedItem.getItemsCount() == 0) {
             return;
         }
-        showStatusToast("鎺夎惤浜? + droppedItem.getItemsCount() + " 涓垬鍒╁搧");
+        showStatusToast("鎺夎惤浜?" + droppedItem.getItemsCount() + " 涓垬鍒╁搧");
         for (Message.ItemState itemState : droppedItem.getItemsList()) {
             applyItemState(itemState);
         }
@@ -2730,7 +2730,7 @@ public class GameScreen implements Screen {
         if (gameOver == null) {
             showStatusToast( "娓告垙缁撴潫");
         } else {
-            showStatusToast(gameOver.getVictory() ? "鎴樻枟鑳滃埄锛? : "鎴樻枟澶辫触");
+            showStatusToast(gameOver.getVictory() ? "鎴樻枟鑳滃埄锛?" : "鎴樻枟澶辫触");
         }
         projectileViews.clear();
         projectileImpacts.clear();
@@ -3116,7 +3116,9 @@ public class GameScreen implements Screen {
         }
     }
 
-    /**鐠囬攱鐪扮€广垺鍩涚粩顖氬晙娑撯偓濞嗏€冲絺鐠у嘲鍙忛柌蹇撴倱濮?鐠佹澘缍嶇拠閿嬬湴濞嗏剝鏆熸俊鍌涚亯濞嗏剝鏆熸潻鍥ь樋娑旂喍绱伴崣鏍ㄧХ闁插秷鐦?/
+    /**鐠囬攱鐪扮€广垺鍩涚粩顖氬晙娑撯偓濞嗏€冲絺鐠у嘲鍙忛柌蹇撴倱濮?鐠佹澘缍嶇拠閿嬬湴濞嗏剝鏆熸俊鍌涚亯濞嗏剝鏆熸潻鍥ь樋娑旂喍绱伴崣鏍ㄧХ闁插秷鐦?
+     *
+     */
     private void maybeSendInitialStateRequest(long timestampMs, String reason) {
         initialStateRequestCount++;
         if (game != null) {
@@ -3159,15 +3161,15 @@ public class GameScreen implements Screen {
         }
         long waitMs = TimeUtils.millis() - initialStateStartMs;
         if (waitMs >= INITIAL_STATE_FAILURE_HINT_MS) {
-            return "缁涘绶熼張宥呭閸ｃ劌鎮撳銉ㄧТ閺冭绱濈拠閿嬵梾閺屻儳缍夌紒婊嗙箾閹恒儻绱欏鑼额嚞濮?" + initialStateRequestCount + " 濞嗏槄绱?;
+            return "缁涘绶熼張宥呭閸ｃ劌鎮撳銉ㄧТ閺冭绱濈拠閿嬵梾閺屻儳缍夌紒婊嗙箾閹恒儻绱欏鑼额嚞濮?" + initialStateRequestCount + " 濞嗏槄绱?";
         }
         if (waitMs >= INITIAL_STATE_CRITICAL_MS) {
-            return "缁涘绶熼張宥呭閸ｃ劌鎮撳銉ㄧТ閺冭绱濆锝呮躬闁插秷鐦?..閿涘牏顑?" + initialStateRequestCount + " 濞嗏槄绱?;
+            return "缁涘绶熼張宥呭閸ｃ劌鎮撳銉ㄧТ閺冭绱濆锝呮躬闁插秷鐦?..閿涘牏顑?" + initialStateRequestCount + " 濞嗏槄绱?";
         }
         if (waitMs >= INITIAL_STATE_WARNING_MS) {
-            return "濮濓絽婀拠閿嬬湴閺堝秴濮熼崳銊ユ倱濮?..閿涘牏顑?" + initialStateRequestCount + " 濞嗏槄绱?;
+            return "濮濓絽婀拠閿嬬湴閺堝秴濮熼崳銊ユ倱濮?..閿涘牏顑?" + initialStateRequestCount + " 濞嗏槄绱?";
         }
-        return "閸旂姾娴囨稉?..閿涘牏顑?" + Math.max(1, initialStateRequestCount) + " 濞喡ゎ嚞濮瑰偊绱?;
+        return "閸旂姾娴囨稉?..閿涘牏顑?" + Math.max(1, initialStateRequestCount) + " 濞喡ゎ嚞濮瑰偊绱?";
     }
 }
 
