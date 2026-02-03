@@ -59,6 +59,9 @@ public class GameScreen implements Screen {
 
     private static final float WORLD_WIDTH = 1280f;
     private static final float WORLD_HEIGHT = 720f;
+    private static final float UPGRADE_CARD_WIDTH = 350f;
+    private static final float UPGRADE_CARD_HEIGHT = 500f;
+    private static final float UPGRADE_TEXT_SCALE = 0.5f;
     // 娑撳孩婀囬崝鈥虫珤 GameManager::SceneConfig.move_speed (200f) 鐎靛綊缍堥敍宀勪缉閸忓秹顣╁ù?閺夊啫鈻夐柅鐔峰娑撳秳绔撮懛?
     private static final float PLAYER_SPEED = 200f;
 
@@ -925,12 +928,17 @@ public class GameScreen implements Screen {
         panel.defaults().pad(8f);
         upgradeTitleLabel = new Label("", skin,"default_32");
         upgradeTitleLabel.setAlignment(Align.center);
+        upgradeTitleLabel.setFontScale(UPGRADE_TEXT_SCALE);
         upgradeHintLabel = new Label("", skin,"default_32");
         upgradeHintLabel.setAlignment(Align.center);
+        upgradeHintLabel.setFontScale(UPGRADE_TEXT_SCALE);
         upgradeHintLabel.setWrap(true);
 
         Table cardsRow = new Table();
-        cardsRow.defaults().pad(10f).width(500f).height(250f);
+        cardsRow.defaults()
+                .pad(10f)
+                .width(UPGRADE_CARD_WIDTH)
+                .height(UPGRADE_CARD_HEIGHT);
         upgradeCards.clear();
         for (int i = 0; i < 3; i++) {
             UpgradeCard card = new UpgradeCard(skin);
@@ -941,7 +949,7 @@ public class GameScreen implements Screen {
                     onUpgradeCardClicked(card);
                 }
             });
-            cardsRow.add(card).grow();
+            cardsRow.add(card).size(UPGRADE_CARD_WIDTH, UPGRADE_CARD_HEIGHT);
         }
 
         upgradeRefreshButton = new TextButton("刷新", skin,"CreateButton");
@@ -951,6 +959,7 @@ public class GameScreen implements Screen {
                 requestUpgradeRefresh();
             }
         });
+        upgradeRefreshButton.getLabel().setFontScale(UPGRADE_TEXT_SCALE);
 
         panel.add(upgradeTitleLabel).growX().row();
         panel.add(cardsRow).growX().row();
@@ -1307,13 +1316,18 @@ public class GameScreen implements Screen {
             setTransform(true);
             setOrigin(Align.center);
             defaults().pad(4f).growX();
+            setSize(UPGRADE_CARD_WIDTH, UPGRADE_CARD_HEIGHT);
+            setBounds(getX(), getY(), UPGRADE_CARD_WIDTH, UPGRADE_CARD_HEIGHT);
             titleLabel = new Label("", skin);
             titleLabel.setAlignment(Align.center);
+            titleLabel.setFontScale(UPGRADE_TEXT_SCALE);
             descLabel = new Label("", skin);
             descLabel.setWrap(true);
             descLabel.setAlignment(Align.center);
+            descLabel.setFontScale(UPGRADE_TEXT_SCALE);
             footerLabel = new Label("", skin);
             footerLabel.setAlignment(Align.center);
+            footerLabel.setFontScale(UPGRADE_TEXT_SCALE);
             add(titleLabel).padBottom(6f).row();
             add(descLabel).padBottom(6f).growX().row();
             add(footerLabel);
@@ -1330,6 +1344,16 @@ public class GameScreen implements Screen {
                     addAction(Actions.scaleTo(1f, 1f, 0.08f));
                 }
             });
+        }
+
+        @Override
+        public float getPrefWidth() {
+            return UPGRADE_CARD_WIDTH;
+        }
+
+        @Override
+        public float getPrefHeight() {
+            return UPGRADE_CARD_HEIGHT;
         }
 
         void bindOption(Message.UpgradeOption option,
