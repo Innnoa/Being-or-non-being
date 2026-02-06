@@ -4,6 +4,7 @@
 #include <numbers>
 #include <spdlog/spdlog.h>
 #include <string_view>
+#include <vector>
 
 #include "game/managers/game_manager.hpp"
 
@@ -103,9 +104,8 @@ void GameManager::ProcessCombatAndProjectiles(
     return;
   }
 
-  auto mark_player_low_freq_dirty = [](PlayerRuntime& runtime) {
-    runtime.low_freq_dirty = true;
-    runtime.dirty = true;
+  auto mark_player_low_freq_dirty = [&](PlayerRuntime& runtime) {
+    MarkPlayerDirty(scene, runtime.state.player_id(), runtime, true);
   };
 
   auto grant_exp = [&](PlayerRuntime& player, uint32_t exp_reward) {
@@ -448,8 +448,9 @@ void GameManager::ProcessCombatAndProjectiles(
     runtime.x = clamped_pos.x();
     runtime.y = clamped_pos.y();
     runtime.is_picked = false;
-    runtime.dirty = true;
-    scene.items.emplace(runtime.item_id, runtime);
+    runtime.dirty = false;
+    auto [it, _] = scene.items.emplace(runtime.item_id, runtime);
+    MarkItemDirty(scene, it->first, it->second);
 
     auto& dropped = dropped_items->emplace_back();
     dropped.set_item_id(runtime.item_id);
@@ -534,6 +535,45 @@ void GameManager::ProcessCombatAndProjectiles(
   // 推进射弹并检测命中：方案二不做射弹逐帧同步，客户端收到 spawn 后本地模拟。
   const float map_w = static_cast<float>(scene.config.width);
   const float map_h = static_cast<float>(scene.config.height);
+  const bool use_grid =
+      scene.enemies.size() >= 16 && !scene.projectiles.empty();
+  struct EnemyGrid {
+    int cells_x = 0;
+    int cells_y = 0;
+    float cell_size = 0.0f;
+    std::vector<std::vector<EnemyRuntime*>> cells;
+  };
+  EnemyGrid enemy_grid;
+  auto clamp_int = [](int v, int lo, int hi) {
+    return std::min(std::max(v, lo), hi);
+  };
+  if (use_grid) {
+    const float cell_size =
+        kNavCellSize > 0 ? static_cast<float>(kNavCellSize) : 100.0f;
+    enemy_grid.cell_size = cell_size;
+    enemy_grid.cells_x =
+        std::max(1, static_cast<int>(std::ceil(map_w / enemy_grid.cell_size)));
+    enemy_grid.cells_y =
+        std::max(1, static_cast<int>(std::ceil(map_h / enemy_grid.cell_size)));
+    enemy_grid.cells.clear();
+    enemy_grid.cells.resize(
+        static_cast<std::size_t>(enemy_grid.cells_x * enemy_grid.cells_y));
+    const int max_cx = enemy_grid.cells_x - 1;
+    const int max_cy = enemy_grid.cells_y - 1;
+    for (auto& [_, enemy] : scene.enemies) {
+      if (!enemy.state.is_alive()) {
+        continue;
+      }
+      const float ex = enemy.state.position().x();
+      const float ey = enemy.state.position().y();
+      const int cx = clamp_int(
+          static_cast<int>(std::floor(ex / enemy_grid.cell_size)), 0, max_cx);
+      const int cy = clamp_int(
+          static_cast<int>(std::floor(ey / enemy_grid.cell_size)), 0, max_cy);
+      enemy_grid.cells[static_cast<std::size_t>(cy * enemy_grid.cells_x + cx)]
+          .push_back(&enemy);
+    }
+  }
 
   for (auto it = scene.projectiles.begin(); it != scene.projectiles.end();) {
     ProjectileRuntime& proj = it->second;
@@ -558,21 +598,58 @@ void GameManager::ProcessCombatAndProjectiles(
     } else {
       const float combined_radius = projectile_radius + kEnemyCollisionRadius;
       float best_t = std::numeric_limits<float>::infinity();
-      for (auto& [enemy_id, enemy] : scene.enemies) {
+      auto test_enemy_hit = [&](EnemyRuntime& enemy) {
         if (!enemy.state.is_alive()) {
-          continue;
+          return;
         }
         const float ex = enemy.state.position().x();
         const float ey = enemy.state.position().y();
         float hit_t = 0.0f;
         if (!SegmentCircleOverlap(prev_x, prev_y, next_x, next_y, ex, ey,
                                   combined_radius, &hit_t)) {
-          continue;
+          return;
         }
         if (hit_t < best_t) {
           best_t = hit_t;
           hit_enemy = &enemy;
-          hit_enemy_id = enemy_id;
+          hit_enemy_id = enemy.state.enemy_id();
+        }
+      };
+      if (use_grid) {
+        const float min_x = std::min(prev_x, next_x) - combined_radius;
+        const float max_x = std::max(prev_x, next_x) + combined_radius;
+        const float min_y = std::min(prev_y, next_y) - combined_radius;
+        const float max_y = std::max(prev_y, next_y) + combined_radius;
+        const int max_cx = enemy_grid.cells_x - 1;
+        const int max_cy = enemy_grid.cells_y - 1;
+        const int min_cx = clamp_int(
+            static_cast<int>(std::floor(min_x / enemy_grid.cell_size)), 0,
+            max_cx);
+        const int max_cx_range = clamp_int(
+            static_cast<int>(std::floor(max_x / enemy_grid.cell_size)), 0,
+            max_cx);
+        const int min_cy = clamp_int(
+            static_cast<int>(std::floor(min_y / enemy_grid.cell_size)), 0,
+            max_cy);
+        const int max_cy_range = clamp_int(
+            static_cast<int>(std::floor(max_y / enemy_grid.cell_size)), 0,
+            max_cy);
+        for (int cy = min_cy; cy <= max_cy_range; ++cy) {
+          for (int cx = min_cx; cx <= max_cx_range; ++cx) {
+            const auto& cell = enemy_grid.cells[static_cast<std::size_t>(
+                cy * enemy_grid.cells_x + cx)];
+            for (EnemyRuntime* enemy : cell) {
+              if (enemy == nullptr) {
+                continue;
+              }
+              test_enemy_hit(*enemy);
+            }
+          }
+        }
+      } else {
+        for (auto& [enemy_id, enemy] : scene.enemies) {
+          (void)enemy_id;
+          test_enemy_hit(enemy);
         }
       }
 
@@ -589,7 +666,7 @@ void GameManager::ProcessCombatAndProjectiles(
             std::min(proj.damage, std::max<int32_t>(0, prev_hp));
         hit_enemy->state.set_health(
             std::max<int32_t>(0, prev_hp - proj.damage));
-        hit_enemy->dirty = true;
+        MarkEnemyDirty(scene, hit_enemy->state.enemy_id(), *hit_enemy);
         *has_dirty = true;
 
         auto owner_it = scene.players.find(proj.owner_player_id);
@@ -612,7 +689,7 @@ void GameManager::ProcessCombatAndProjectiles(
           hit_enemy->dead_elapsed_seconds = 0.0;
           hit_enemy->force_sync_left =
               std::max(hit_enemy->force_sync_left, kEnemySpawnForceSyncCount);
-          hit_enemy->dirty = true;
+          MarkEnemyDirty(scene, hit_enemy->state.enemy_id(), *hit_enemy);
 
           try_drop_from_enemy(*hit_enemy);
 

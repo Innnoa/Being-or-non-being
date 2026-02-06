@@ -41,6 +41,8 @@
     "max_enemies_alive": 2,
     "__comment_max_enemy_spawn_per_tick": "单 tick 最大刷怪数量",
     "max_enemy_spawn_per_tick": 1,
+    "__comment_max_enemy_replan_per_tick": "单 tick 最大寻路重算次数",
+    "max_enemy_replan_per_tick": 16,
     "__comment_projectile_speed": "射弹速度（像素/秒）",
     "projectile_speed": 200.0,
     "__comment_projectile_radius": "射弹碰撞半径（像素）",
@@ -55,6 +57,10 @@
     "projectile_attack_min_interval_seconds": 0.05,
     "__comment_projectile_attack_max_interval_seconds": "射速下限（最大间隔，秒）",
     "projectile_attack_max_interval_seconds": 2.0,
+    "__comment_perf_sample_stride": "性能采样步长（每 N 帧记录一条）",
+    "perf_sample_stride": 1,
+    "__comment_tcp_packet_debug_log_stride": "TCP包debug日志步长（每 N 次输出一次）",
+    "tcp_packet_debug_log_stride": 60,
     "__comment_log_level": "日志等级（trace/debug/info/warn/error/critical）",
     "log_level": "debug"
 }

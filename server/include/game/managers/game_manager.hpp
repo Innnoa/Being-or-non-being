@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -195,16 +196,19 @@ class GameManager {
 
   // 单帧性能采样
   struct PerfSample {
-    uint64_t tick = 0;              // 逻辑帧编号
-    double logic_ms = 0.0;          // 逻辑帧耗时（毫秒）
-    double dt_seconds = 0.0;        // 逻辑步长（秒）
-    uint32_t player_count = 0;      // 玩家数量
-    uint32_t enemy_count = 0;       // 敌人数量
-    uint32_t projectile_count = 0;  // 射弹数量
-    uint32_t item_count = 0;        // 道具数量
-    bool is_paused = false;         // 是否处于暂停
-    uint32_t delta_items_size = 0;  // delta 中道具数量
-    uint32_t sync_items_size = 0;   // full sync 中道具数量
+    uint64_t tick = 0;                // 逻辑帧编号
+    double logic_ms = 0.0;            // 逻辑帧耗时（毫秒）
+    double dt_seconds = 0.0;          // 逻辑步长（秒）
+    uint32_t player_count = 0;        // 玩家数量
+    uint32_t enemy_count = 0;         // 敌人数量
+    uint32_t projectile_count = 0;    // 射弹数量
+    uint32_t item_count = 0;          // 道具数量
+    uint32_t dirty_player_count = 0;  // 脏玩家数量
+    uint32_t dirty_enemy_count = 0;   // 脏敌人数量
+    uint32_t dirty_item_count = 0;    // 脏道具数量
+    bool is_paused = false;           // 是否处于暂停
+    uint32_t delta_items_size = 0;    // delta 中道具数量
+    uint32_t sync_items_size = 0;     // full sync 中道具数量
   };
 
   // 单局性能统计
@@ -232,6 +236,9 @@ class GameManager {
     std::unordered_map<uint32_t, ProjectileRuntime>
         projectiles;                                  // 射弹运行时状态表
     std::unordered_map<uint32_t, ItemRuntime> items;  // 道具运行时状态表
+    std::unordered_set<uint32_t> dirty_player_ids;    // 脏玩家ID缓存
+    std::unordered_set<uint32_t> dirty_enemy_ids;     // 脏敌人ID缓存
+    std::unordered_set<uint32_t> dirty_item_ids;      // 脏道具ID缓存
     std::vector<EnemyRuntime> enemy_pool;             // 敌人复用池
     std::vector<ProjectileRuntime> projectile_pool;   // 射弹复用池
     std::vector<ItemRuntime> item_pool;               // 道具复用池
@@ -257,6 +264,7 @@ class GameManager {
     double sync_idle_elapsed = 0.0;  // 低活跃累计时间
     double full_sync_elapsed = 0.0;  // 距离上次全量同步的累计时间
     std::chrono::steady_clock::time_point last_tick_time;  // 上一次tick的时间点
+    std::chrono::steady_clock::time_point next_tick_time;  // 下一帧调度时间点
     std::chrono::duration<double> tick_interval;           // 逻辑帧固定间隔
     std::chrono::duration<double> sync_interval;           // 状态同步间隔
     std::chrono::duration<double> dynamic_sync_interval;   // 动态同步间隔
@@ -304,8 +312,29 @@ class GameManager {
   void ResetUpgradeLocked(Scene& scene);
   void ApplyUpgradeEffect(PlayerRuntime& runtime,
                           const UpgradeEffectConfig& effect);
+  void MarkPlayerDirty(Scene& scene, uint32_t player_id, PlayerRuntime& runtime,
+                       bool low_freq);
+  void MarkEnemyDirty(Scene& scene, uint32_t enemy_id, EnemyRuntime& runtime);
+  void MarkItemDirty(Scene& scene, uint32_t item_id, ItemRuntime& runtime);
   std::size_t GetPredictionHistoryLimit(const Scene& scene) const;
   void RecordPlayerHistoryLocked(Scene& scene);
+  static void FillPlayerHighFreq(const PlayerRuntime& runtime,
+                                 lawnmower::PlayerState* out);
+  static void FillPlayerForSync(PlayerRuntime& runtime,
+                                lawnmower::PlayerState* out);
+  static bool PositionChanged(const lawnmower::Vector2& current,
+                              const lawnmower::Vector2& last);
+  static void UpdatePlayerLastSync(PlayerRuntime& runtime);
+  static void UpdateEnemyLastSync(EnemyRuntime& runtime);
+  void BuildSyncPayloadsLocked(
+      uint32_t room_id, Scene& scene, bool force_full_sync,
+      const std::unordered_set<uint32_t>& dirty_player_ids,
+      const std::unordered_set<uint32_t>& dirty_enemy_ids,
+      const std::unordered_set<uint32_t>& dirty_item_ids,
+      lawnmower::S2C_GameStateSync* sync,
+      lawnmower::S2C_GameStateDeltaSync* delta, bool* built_sync,
+      bool* built_delta, uint32_t* perf_delta_items_size,
+      uint32_t* perf_sync_items_size);
   void CollectExpiredPlayersLocked(const Scene& scene, double grace_seconds,
                                    std::vector<uint32_t>* out) const;
   bool HandlePausedTickLocked(
@@ -315,6 +344,9 @@ class GameManager {
   void ResetPerfStats(Scene& scene);
   void RecordPerfSampleLocked(Scene& scene, double elapsed_ms,
                               double dt_seconds, bool is_paused,
+                              uint32_t dirty_player_count,
+                              uint32_t dirty_enemy_count,
+                              uint32_t dirty_item_count,
                               uint32_t delta_items_size,
                               uint32_t sync_items_size);
   void SavePerfStatsToFile(uint32_t room_id, const PerfStats& stats,

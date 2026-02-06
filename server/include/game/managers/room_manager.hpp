@@ -94,6 +94,10 @@ class RoomManager {
     std::vector<RoomPlayer> players;
   };
 
+  RoomPlayer* FindRoomPlayerLocked(Room& room, uint32_t player_id);
+  const RoomPlayer* FindRoomPlayerLocked(const Room& room,
+                                         uint32_t player_id) const;
+
   struct RoomUpdate {
     lawnmower::S2C_RoomUpdate message;  // 房间信息结构： room_id , player
     std::vector<std::weak_ptr<TcpSession>>

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <arpa/inet.h>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <random>
@@ -17,6 +18,7 @@ namespace {
 constexpr std::size_t kMaxPacketSize = 64 * 1024;  // 设定最大包大小
 constexpr std::size_t kMaxWriteQueueSize = 1024;   // 防止慢连接无限堆积
 constexpr std::size_t kTokenBytes = 16;            // 128bit 令牌
+constexpr uint64_t kPacketDebugLogStride = 60;     // 高频日志限流步长
 
 // 类型转字符串
 std::string MessageTypeToString(lawnmower::MessageType type) {
@@ -37,6 +39,22 @@ void BroadcastToRoom(std::span<const std::weak_ptr<TcpSession>> sessions,
     }
   }
 }
+
+template <typename T>
+bool ParsePayload(const std::string& payload, T* out,
+                  const char* warn_message) {
+  if (out == nullptr) {
+    return false;
+  }
+  if (!out->ParseFromString(payload)) {
+    if (warn_message != nullptr) {
+      spdlog::warn("{}", warn_message);
+    }
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 // 用于给 player 赋 id，next_player_id_ 是静态的
@@ -47,6 +65,9 @@ std::atomic<uint32_t> TcpSession::active_sessions_{0};
 std::unordered_map<uint32_t, std::string> TcpSession::session_tokens_{};
 // mutex互斥锁
 std::mutex TcpSession::token_mutex_;
+std::atomic<uint32_t> TcpSession::packet_debug_log_stride_{
+    static_cast<uint32_t>(kPacketDebugLogStride)};
+std::atomic<uint64_t> TcpSession::packet_debug_log_counter_{0};
 
 // 构造
 TcpSession::TcpSession(tcp::socket socket) : socket_(std::move(socket)) {}
@@ -105,6 +126,19 @@ void TcpSession::RevokeToken(uint32_t player_id) {
   session_tokens_.erase(player_id);                // 擦除该节点
 }
 
+void TcpSession::SetPacketDebugLogStride(uint32_t stride) {
+  packet_debug_log_stride_.store(std::max<uint32_t>(1, stride),
+                                 std::memory_order_relaxed);
+}
+
+bool TcpSession::ShouldLogPacketDebug() {
+  const uint32_t stride = std::max<uint32_t>(
+      1, packet_debug_log_stride_.load(std::memory_order_relaxed));
+  const uint64_t index =
+      packet_debug_log_counter_.fetch_add(1, std::memory_order_relaxed);
+  return (index % stride) == 0;
+}
+
 // 专门用于填充 Packet 包，设置 Message_type 类型 + payload 内容
 void TcpSession::SendProto(lawnmower::MessageType type,
                            const google::protobuf::Message& message) {
@@ -126,7 +160,7 @@ void TcpSession::SendFramedPacket(
     return;
   }
 
-  if (spdlog::should_log(spdlog::level::debug)) {
+  if (spdlog::should_log(spdlog::level::debug) && ShouldLogPacketDebug()) {
     spdlog::debug(
         "TCP发送包 {}，payload长度 {} bytes，序列化后长度 {} "
         "bytes（含4字节包长总计 {} "
@@ -159,9 +193,11 @@ void TcpSession::CloseSession(SessionCloseReason reason) {
   }
   closed_ = true;
 
-  if (reason == SessionCloseReason::kClientRequest) {
-    spdlog::info("客户端请求断开连接");
-  }
+  const char* reason_text = reason == SessionCloseReason::kClientRequest
+                                ? "client_request"
+                                : "network_error";
+  spdlog::info("[session] close reason={} player_id={}", reason_text,
+               player_id_);
 
   // 清除该play_id 有关的结构
   if (player_id_ != 0) {
@@ -185,7 +221,10 @@ void TcpSession::read_header() {
   // asio::buffer是设置异步缓冲区
   asio::async_read(socket_, asio::buffer(length_buffer_),
                    [this, self](const asio::error_code& ec, std::size_t) {
-                     spdlog::debug("开始读取包长度");
+                     if (spdlog::should_log(spdlog::level::debug) &&
+                         ShouldLogPacketDebug()) {
+                       spdlog::debug("开始读取包长度");
+                     }
                      if (ec) {
                        spdlog::warn("读取包长度失败: {}", ec.message());
                        handle_disconnect();
@@ -197,7 +236,10 @@ void TcpSession::read_header() {
                                  sizeof(net_len));
                      // ntohl 是把网络字节序(大端) 转成主机字节序
                      const uint32_t body_len = ntohl(net_len);
-                     spdlog::debug("收到包长度: {}", body_len);
+                     if (spdlog::should_log(spdlog::level::debug) &&
+                         ShouldLogPacketDebug()) {
+                       spdlog::debug("收到包长度: {}", body_len);
+                     }
                      if (body_len == 0 || body_len > kMaxPacketSize) {
                        spdlog::warn("包长度异常: {}", body_len);
                        handle_disconnect();
@@ -269,8 +311,7 @@ void TcpSession::do_write() {
 // 处理登录请求
 void TcpSession::HandleLogin(const std::string& payload) {
   lawnmower::C2S_Login login;
-  if (!login.ParseFromString(payload)) {
-    spdlog::warn("解析登录包体失败");
+  if (!ParsePayload(payload, &login, "解析登录包体失败")) {
     return;
   }
 
@@ -306,8 +347,7 @@ void TcpSession::HandleLogin(const std::string& payload) {
 // 处理心跳请求
 void TcpSession::HandleHeartbeat(const std::string& payload) {
   lawnmower::C2S_Heartbeat heartbeat;
-  if (!heartbeat.ParseFromString(payload)) {
-    spdlog::warn("解析心跳包失败");
+  if (!ParsePayload(payload, &heartbeat, "解析心跳包失败")) {
     return;
   }
 
@@ -323,25 +363,31 @@ void TcpSession::HandleHeartbeat(const std::string& payload) {
 // 处理重连请求
 void TcpSession::HandleReconnectRequest(const std::string& payload) {
   lawnmower::C2S_ReconnectRequest request;
-  if (!request.ParseFromString(payload)) {
-    spdlog::warn("解析重连请求包失败");
+  if (!ParsePayload(payload, &request, "解析重连请求包失败")) {
     return;
   }
 
   lawnmower::S2C_ReconnectAck ack;
   ack.set_player_id(request.player_id());
   ack.set_room_id(request.room_id());
+  const auto log_fail = [&](const char* reason) {
+    spdlog::info("[reconnect] fail player_id={} room_id={} reason={}",
+                 request.player_id(), request.room_id(),
+                 reason != nullptr ? reason : "");
+  };
 
   if (player_id_ != 0) {
     ack.set_success(false);
     ack.set_message("当前会话已登录");
     SendProto(lawnmower::MessageType::MSG_S2C_RECONNECT_ACK, ack);
+    log_fail("session already logged in");
     return;
   }
   if (request.player_id() == 0) {
     ack.set_success(false);
     ack.set_message("缺少玩家ID");
     SendProto(lawnmower::MessageType::MSG_S2C_RECONNECT_ACK, ack);
+    log_fail("missing player id");
     return;
   }
 
@@ -351,6 +397,7 @@ void TcpSession::HandleReconnectRequest(const std::string& payload) {
     ack.set_success(false);
     ack.set_message("玩家不在房间");
     SendProto(lawnmower::MessageType::MSG_S2C_RECONNECT_ACK, ack);
+    log_fail("player not in room");
     return;
   }
   const uint32_t target_room_id = *room_opt;
@@ -358,6 +405,7 @@ void TcpSession::HandleReconnectRequest(const std::string& payload) {
     ack.set_success(false);
     ack.set_message("房间不匹配");
     SendProto(lawnmower::MessageType::MSG_S2C_RECONNECT_ACK, ack);
+    log_fail("room mismatch");
     return;
   }
 
@@ -369,6 +417,7 @@ void TcpSession::HandleReconnectRequest(const std::string& payload) {
     ack.set_success(false);
     ack.set_message("重连失败");
     SendProto(lawnmower::MessageType::MSG_S2C_RECONNECT_ACK, ack);
+    log_fail("attach session failed");
     return;
   }
 
@@ -381,6 +430,7 @@ void TcpSession::HandleReconnectRequest(const std::string& payload) {
       ack.set_success(false);
       ack.set_message("场景不存在");
       SendProto(lawnmower::MessageType::MSG_S2C_RECONNECT_ACK, ack);
+      log_fail("scene missing");
       return;
     }
     ack.set_server_tick(static_cast<uint32_t>(snapshot.server_tick));
@@ -414,20 +464,19 @@ void TcpSession::HandleReconnectRequest(const std::string& payload) {
   ack.set_success(true);
   ack.set_message("reconnect success");
   SendProto(lawnmower::MessageType::MSG_S2C_RECONNECT_ACK, ack);
+  spdlog::info("[reconnect] success player_id={} room_id={} is_playing={}",
+               request.player_id(), target_room_id,
+               is_playing ? "true" : "false");
 
   if (is_playing) {
-    lawnmower::S2C_GameStateSync sync;
-    if (GameManager::Instance().BuildFullState(target_room_id, &sync)) {
-      SendProto(lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
-    }
+    SendFullSyncToSession(target_room_id);
   }
 }
 
 // 处理创建房间请求
 void TcpSession::HandleCreateRoom(const std::string& payload) {
   lawnmower::C2S_CreateRoom request;
-  if (!request.ParseFromString(payload)) {
-    spdlog::warn("解析创建房间包体失败");
+  if (!ParsePayload(payload, &request, "解析创建房间包体失败")) {
     return;
   }
 
@@ -445,8 +494,7 @@ void TcpSession::HandleCreateRoom(const std::string& payload) {
 // 处理获取房间列表请求
 void TcpSession::HandleGetRoomList(const std::string& payload) {
   lawnmower::C2S_GetRoomList request;
-  if (!request.ParseFromString(payload)) {
-    spdlog::warn("解析房间列表请求失败");
+  if (!ParsePayload(payload, &request, "解析房间列表请求失败")) {
     return;
   }
 
@@ -461,8 +509,7 @@ void TcpSession::HandleGetRoomList(const std::string& payload) {
 // 处理加入房间请求
 void TcpSession::HandleJoinRoom(const std::string& payload) {
   lawnmower::C2S_JoinRoom request;
-  if (!request.ParseFromString(payload)) {
-    spdlog::warn("解析加入房间包体失败");
+  if (!ParsePayload(payload, &request, "解析加入房间包体失败")) {
     return;
   }
 
@@ -480,8 +527,7 @@ void TcpSession::HandleJoinRoom(const std::string& payload) {
 // 处理离开房间请求
 void TcpSession::HandleLeaveRoom(const std::string& payload) {
   lawnmower::C2S_LeaveRoom request;
-  if (!request.ParseFromString(payload)) {
-    spdlog::warn("解析离开房间包体失败");
+  if (!ParsePayload(payload, &request, "解析离开房间包体失败")) {
     return;
   }
 
@@ -498,8 +544,7 @@ void TcpSession::HandleLeaveRoom(const std::string& payload) {
 // 处理设置准备状态请求
 void TcpSession::HandleSetReady(const std::string& payload) {
   lawnmower::C2S_SetReady request;
-  if (!request.ParseFromString(payload)) {
-    spdlog::warn("解析设置准备状态包体失败");
+  if (!ParsePayload(payload, &request, "解析设置准备状态包体失败")) {
     return;
   }
 
@@ -521,8 +566,7 @@ void TcpSession::HandleRequestQuit() {
 // 处理开始游戏请求
 void TcpSession::HandleStartGame(const std::string& payload) {
   lawnmower::C2S_StartGame request;
-  if (!request.ParseFromString(payload)) {
-    spdlog::warn("解析开始游戏请求失败");
+  if (!ParsePayload(payload, &request, "解析开始游戏请求失败")) {
     return;
   }
 
@@ -546,44 +590,9 @@ void TcpSession::HandleStartGame(const std::string& payload) {
   // 广播
   BroadcastToRoom(sessions, lawnmower::MessageType::MSG_S2C_GAME_START, result);
 
-  lawnmower::S2C_GameStateSync sync;
-  if (GameManager::Instance().BuildFullState(snapshot->room_id, &sync)) {
-    bool sent_udp = false;
-    if (auto udp = GameManager::Instance().GetUdpServer()) {
-      sent_udp = udp->BroadcastState(snapshot->room_id, sync) > 0;
-    }
-    if (!sent_udp) {
-      // 尚未收到客户端 UDP，首帧用 TCP 兜底
-      BroadcastToRoom(sessions, lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC,
-                      sync);
-    }
+  if (SendFullSyncToRoom(snapshot->room_id, sessions,
+                         scene_info.state_sync_rate())) {
     GameManager::Instance().StartGameLoop(snapshot->room_id);
-    // 启动后再延迟一个同步周期重发一次全量同步，避免客户端切屏/UDP未打通时错过首帧。
-    if (auto io = GameManager::Instance().GetIoContext()) {
-      auto timer = std::make_shared<asio::steady_timer>(*io);
-      timer->expires_after(std::chrono::milliseconds(
-          static_cast<int>(1000.0 / scene_info.state_sync_rate())));
-      timer->async_wait(
-          [room_id = snapshot->room_id, timer](const asio::error_code& ec) {
-            if (ec == asio::error::operation_aborted) {
-              return;
-            }
-            lawnmower::S2C_GameStateSync retry_sync;
-            if (GameManager::Instance().BuildFullState(room_id, &retry_sync)) {
-              bool sent_retry_udp = false;
-              if (auto udp = GameManager::Instance().GetUdpServer()) {
-                sent_retry_udp = udp->BroadcastState(room_id, retry_sync) > 0;
-              }
-              if (!sent_retry_udp) {
-                const auto retry_sessions =
-                    RoomManager::Instance().GetRoomSessions(room_id);
-                BroadcastToRoom(retry_sessions,
-                                lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC,
-                                retry_sync);
-              }
-            }
-          });
-    }
   }
   spdlog::info("房间 {} 游戏开始", snapshot->room_id);
 }
@@ -591,8 +600,7 @@ void TcpSession::HandleStartGame(const std::string& payload) {
 // 处理玩家输入请求
 void TcpSession::HandlePlayerInput(const std::string& payload) {
   lawnmower::C2S_PlayerInput input;
-  if (!input.ParseFromString(payload)) {
-    spdlog::warn("解析玩家输入失败");
+  if (!ParsePayload(payload, &input, "解析玩家输入失败")) {
     return;
   }
 
@@ -618,8 +626,7 @@ void TcpSession::HandlePlayerInput(const std::string& payload) {
 // 处理升级请求确认
 void TcpSession::HandleUpgradeRequestAck(const std::string& payload) {
   lawnmower::C2S_UpgradeRequestAck ack;
-  if (!ack.ParseFromString(payload)) {
-    spdlog::warn("解析升级请求确认失败");
+  if (!ParsePayload(payload, &ack, "解析升级请求确认失败")) {
     return;
   }
   if (player_id_ == 0) {
@@ -635,8 +642,7 @@ void TcpSession::HandleUpgradeRequestAck(const std::string& payload) {
 // 处理升级选项确认
 void TcpSession::HandleUpgradeOptionsAck(const std::string& payload) {
   lawnmower::C2S_UpgradeOptionsAck ack;
-  if (!ack.ParseFromString(payload)) {
-    spdlog::warn("解析升级选项确认失败");
+  if (!ParsePayload(payload, &ack, "解析升级选项确认失败")) {
     return;
   }
   if (player_id_ == 0) {
@@ -652,8 +658,7 @@ void TcpSession::HandleUpgradeOptionsAck(const std::string& payload) {
 // 处理升级选择
 void TcpSession::HandleUpgradeSelect(const std::string& payload) {
   lawnmower::C2S_UpgradeSelect select;
-  if (!select.ParseFromString(payload)) {
-    spdlog::warn("解析升级选择失败");
+  if (!ParsePayload(payload, &select, "解析升级选择失败")) {
     return;
   }
   if (player_id_ == 0) {
@@ -669,8 +674,7 @@ void TcpSession::HandleUpgradeSelect(const std::string& payload) {
 // 处理刷新升级请求
 void TcpSession::HandleUpgradeRefreshRequest(const std::string& payload) {
   lawnmower::C2S_UpgradeRefreshRequest refresh;
-  if (!refresh.ParseFromString(payload)) {
-    spdlog::warn("解析刷新升级请求失败");
+  if (!ParsePayload(payload, &refresh, "解析刷新升级请求失败")) {
     return;
   }
   if (player_id_ == 0) {
@@ -684,10 +688,71 @@ void TcpSession::HandleUpgradeRefreshRequest(const std::string& payload) {
   }
 }
 
+bool TcpSession::SendFullSyncToRoom(
+    uint32_t room_id, const std::vector<std::weak_ptr<TcpSession>>& sessions,
+    uint32_t state_sync_rate) {
+  lawnmower::S2C_GameStateSync sync;
+  if (!GameManager::Instance().BuildFullState(room_id, &sync)) {
+    return false;
+  }
+
+  bool sent_udp = false;
+  if (auto udp = GameManager::Instance().GetUdpServer()) {
+    sent_udp = udp->BroadcastState(room_id, sync) > 0;
+  }
+  if (!sent_udp) {
+    // 尚未收到客户端 UDP，首帧用 TCP 兜底
+    BroadcastToRoom(sessions, lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC,
+                    sync);
+  }
+
+  const uint32_t sync_rate = std::max<uint32_t>(1, state_sync_rate);
+  if (auto io = GameManager::Instance().GetIoContext()) {
+    auto timer = std::make_shared<asio::steady_timer>(*io);
+    const int interval_ms =
+        std::max(1, static_cast<int>(1000.0 / static_cast<double>(sync_rate)));
+    timer->expires_after(std::chrono::milliseconds(interval_ms));
+    timer->async_wait([room_id, timer](const asio::error_code& ec) {
+      if (ec == asio::error::operation_aborted) {
+        return;
+      }
+      lawnmower::S2C_GameStateSync retry_sync;
+      if (GameManager::Instance().BuildFullState(room_id, &retry_sync)) {
+        bool sent_retry_udp = false;
+        if (auto udp = GameManager::Instance().GetUdpServer()) {
+          sent_retry_udp = udp->BroadcastState(room_id, retry_sync) > 0;
+        }
+        if (!sent_retry_udp) {
+          const auto retry_sessions =
+              RoomManager::Instance().GetRoomSessions(room_id);
+          BroadcastToRoom(retry_sessions,
+                          lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC,
+                          retry_sync);
+        }
+      }
+    });
+  }
+
+  spdlog::debug("全量同步发送 room_id={} target=room udp={}", room_id,
+                sent_udp ? "true" : "false");
+  return true;
+}
+
+void TcpSession::SendFullSyncToSession(uint32_t room_id) {
+  lawnmower::S2C_GameStateSync sync;
+  if (!GameManager::Instance().BuildFullState(room_id, &sync)) {
+    return;
+  }
+  SendProto(lawnmower::MessageType::MSG_S2C_GAME_STATE_SYNC, sync);
+  spdlog::debug("全量同步发送 room_id={} target=session", room_id);
+}
+
 // 识别包类型
 void TcpSession::handle_packet(const lawnmower::Packet& packet) {
   using lawnmower::MessageType;
-  spdlog::debug("开始处理消息 {}", MessageTypeToString(packet.msg_type()));
+  if (spdlog::should_log(spdlog::level::debug) && ShouldLogPacketDebug()) {
+    spdlog::debug("开始处理消息 {}", MessageTypeToString(packet.msg_type()));
+  }
   // 已拆分为独立处理函数
   switch (packet.msg_type()) {
     case MessageType::MSG_C2S_LOGIN:

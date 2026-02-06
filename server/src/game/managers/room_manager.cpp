@@ -423,6 +423,26 @@ std::optional<uint32_t> RoomManager::GetPlayerRoom(uint32_t player_id) const {
   return it->second;
 }
 
+RoomManager::RoomPlayer* RoomManager::FindRoomPlayerLocked(Room& room,
+                                                           uint32_t player_id) {
+  for (auto& player : room.players) {
+    if (player.player_id == player_id) {
+      return &player;
+    }
+  }
+  return nullptr;
+}
+
+const RoomManager::RoomPlayer* RoomManager::FindRoomPlayerLocked(
+    const Room& room, uint32_t player_id) const {
+  for (const auto& player : room.players) {
+    if (player.player_id == player_id) {
+      return &player;
+    }
+  }
+  return nullptr;
+}
+
 bool RoomManager::MarkPlayerDisconnected(uint32_t player_id) {
   std::lock_guard<std::mutex> lock(mutex_);
   const auto mapping = player_room_.find(player_id);
@@ -437,15 +457,12 @@ bool RoomManager::MarkPlayerDisconnected(uint32_t player_id) {
   }
 
   Room& room = room_it->second;
-  const auto player_it = std::find_if(room.players.begin(), room.players.end(),
-                                      [player_id](const RoomPlayer& player) {
-                                        return player.player_id == player_id;
-                                      });
-  if (player_it == room.players.end()) {
+  RoomPlayer* player = FindRoomPlayerLocked(room, player_id);
+  if (player == nullptr) {
     return false;
   }
 
-  player_it->session.reset();
+  player->session.reset();
   return true;
 }
 
@@ -469,20 +486,17 @@ bool RoomManager::AttachSession(uint32_t player_id, uint32_t room_id,
   }
 
   Room& room = room_it->second;
-  auto player_it = std::find_if(room.players.begin(), room.players.end(),
-                                [player_id](const RoomPlayer& player) {
-                                  return player.player_id == player_id;
-                                });
-  if (player_it == room.players.end()) {
+  RoomPlayer* player = FindRoomPlayerLocked(room, player_id);
+  if (player == nullptr) {
     return false;
   }
 
-  player_it->session = std::move(session);
+  player->session = std::move(session);
   if (out_is_playing != nullptr) {
     *out_is_playing = room.is_playing;
   }
   if (out_player_name != nullptr) {
-    *out_player_name = player_it->player_name;
+    *out_player_name = player->player_name;
   }
   return true;
 }
