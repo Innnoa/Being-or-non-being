@@ -478,6 +478,7 @@ public class Main extends Game {
         } else {
             reconnectState = ReconnectState.IDLE;
             notifyGameScreenReconnectFinish();
+            stopUdpClient();
             Gdx.app.postRunnable(() -> {
                 setScreen(new GameRoomScreen(Main.this, skin));
             });

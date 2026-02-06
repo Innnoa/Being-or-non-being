@@ -119,6 +119,8 @@ public class GameScreen implements Screen {
     private final Array<ProjectileImpact> projectileImpacts = new Array<>();
     private final Vector2 targetingBuffer = new Vector2();
     private final Map<Integer, Message.ItemState> itemStateCache = new HashMap<>();
+    private final Map<Integer, Message.ItemState> itemDeltaBuffer = new LinkedHashMap<>();
+    private final Set<Integer> droppedItemDedupSet = new HashSet<>();
     private final Map<Integer, ItemView> itemViews = new HashMap<>();
     private final Map<Integer, TextureRegion> itemTextureRegions = new HashMap<>();
     private final Map<Integer, Texture> itemTextureHandles = new HashMap<>();
@@ -429,9 +431,18 @@ public class GameScreen implements Screen {
         if (!shouldApplyItemDelta(incomingTick, serverTimeMs)) {
             return;
         }
+        itemDeltaBuffer.clear();
         for (Message.ItemState itemState : items) {
-            applyItemState(itemState);
+            if (itemState == null) {
+                continue;
+            }
+            int itemId = (int) itemState.getItemId();
+            itemDeltaBuffer.put(itemId, itemState);
         }
+        for (Message.ItemState dedupedState : itemDeltaBuffer.values()) {
+            applyItemState(dedupedState);
+        }
+        itemDeltaBuffer.clear();
     }
 
     /**
@@ -2279,6 +2290,7 @@ public class GameScreen implements Screen {
                 //閺堫剙婀撮悳鈺侇啀,濞茶崵娼冮幍宥咁槱閻?
                 if (playerId == myId) {
                     isSelfAlive = player.getIsAlive();
+                    game.updateConfirmedInputSeq(player.getLastProcessedInputSeq());
                     if (isSelfAlive) {
                         selfStateFromServer = player;
                     }
@@ -2556,7 +2568,11 @@ public class GameScreen implements Screen {
             builder.setIsAlive(delta.getIsAlive());
         }
         if ((mask & PLAYER_DELTA_LAST_INPUT_MASK) != 0 && delta.hasLastProcessedInputSeq()) {
-            builder.setLastProcessedInputSeq(delta.getLastProcessedInputSeq());
+            int confirmedSeq = delta.getLastProcessedInputSeq();
+            builder.setLastProcessedInputSeq(confirmedSeq);
+            if (playerId == game.getPlayerId()) {
+                game.updateConfirmedInputSeq(confirmedSeq);
+            }
         }
         //閺囧瓨鏌婄紓鎾崇摠,鏉╂柨娲?
         Message.PlayerState updated = builder.build();
@@ -2866,17 +2882,22 @@ public class GameScreen implements Screen {
             return;
         }
         showStatusToast("鎺夎惤浜?" + droppedItem.getItemsCount() + " 涓垬鍒╁搧");
+        droppedItemDedupSet.clear();
         for (Message.ItemState itemState : droppedItem.getItemsList()) {
             if (itemState == null) {
                 continue;
             }
             int itemId = (int) itemState.getItemId();
+            if (!droppedItemDedupSet.add(itemId)) {
+                continue;
+            }
             Message.ItemState cached = itemStateCache.get(itemId);
             if (cached != null && !cached.getIsPicked()) {
                 continue;
             }
             applyItemState(itemState);
         }
+        droppedItemDedupSet.clear();
     }
 
     private void handleGameOver(Message.S2C_GameOver gameOver) {
