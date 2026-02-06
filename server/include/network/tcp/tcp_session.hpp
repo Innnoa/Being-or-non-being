@@ -30,10 +30,12 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
                         std::size_t body_len);
   static bool VerifyToken(uint32_t player_id, std::string_view token);
   static void RevokeToken(uint32_t player_id);
+  static void SetPacketDebugLogStride(uint32_t stride);
 
  private:
   static std::string GenerateToken();
   static void RegisterToken(uint32_t player_id, std::string token);
+  static bool ShouldLogPacketDebug();
 
   void read_header();
   void read_body(std::size_t length);
@@ -62,6 +64,10 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   void HandleUpgradeOptionsAck(const std::string& payload);
   void HandleUpgradeSelect(const std::string& payload);
   void HandleUpgradeRefreshRequest(const std::string& payload);
+  bool SendFullSyncToRoom(
+      uint32_t room_id, const std::vector<std::weak_ptr<TcpSession>>& sessions,
+      uint32_t state_sync_rate);
+  void SendFullSyncToSession(uint32_t room_id);
 
   tcp::socket socket_;
   std::array<char, sizeof(uint32_t)> length_buffer_{};
@@ -76,4 +82,6 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   static std::unordered_map<uint32_t, std::string>
       session_tokens_;  // player_id -- token
   static std::mutex token_mutex_;
+  static std::atomic<uint32_t> packet_debug_log_stride_;
+  static std::atomic<uint64_t> packet_debug_log_counter_;
 };

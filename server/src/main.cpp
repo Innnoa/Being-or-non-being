@@ -11,6 +11,7 @@
 #include "game/managers/room_manager.hpp"
 #include "message.pb.h"
 #include "network/tcp/tcp_server.hpp"
+#include "network/tcp/tcp_session.hpp"
 #include "network/udp/udp_server.hpp"
 
 int main() {
@@ -54,6 +55,7 @@ int main() {
     GameManager::Instance().SetItemsConfig(items_config);
     GameManager::Instance().SetUpgradeConfig(upgrade_config);
     RoomManager::Instance().SetConfig(config);
+    TcpSession::SetPacketDebugLogStride(config.tcp_packet_debug_log_stride);
 
     // 单例设置游戏管理io上下文
     GameManager::Instance().SetIoContext(&io);

@@ -124,6 +124,8 @@ bool LoadServerConfig(ServerConfig* out) {
   ExtractUint(content, "max_enemies_alive", &cfg.max_enemies_alive);
   ExtractUint(content, "max_enemy_spawn_per_tick",
               &cfg.max_enemy_spawn_per_tick);
+  ExtractUint(content, "max_enemy_replan_per_tick",
+              &cfg.max_enemy_replan_per_tick);
   ExtractFloat(content, "projectile_speed", &cfg.projectile_speed);
   ExtractFloat(content, "projectile_radius", &cfg.projectile_radius);
   ExtractFloat(content, "projectile_muzzle_offset",
@@ -137,6 +139,9 @@ bool LoadServerConfig(ServerConfig* out) {
                &cfg.projectile_attack_max_interval_seconds);
   ExtractFloat(content, "reconnect_grace_seconds",
                &cfg.reconnect_grace_seconds);
+  ExtractUint(content, "perf_sample_stride", &cfg.perf_sample_stride);
+  ExtractUint(content, "tcp_packet_debug_log_stride",
+              &cfg.tcp_packet_debug_log_stride);
   ExtractString(content, "log_level", &cfg.log_level);
 
   cfg.prediction_history_seconds =
@@ -153,6 +158,11 @@ bool LoadServerConfig(ServerConfig* out) {
       std::clamp(cfg.sync_scale_idle, cfg.sync_scale_medium, 30.0f);
   cfg.reconnect_grace_seconds =
       std::clamp(cfg.reconnect_grace_seconds, 1.0f, 600.0f);
+  cfg.max_enemy_replan_per_tick =
+      std::max<uint32_t>(1, cfg.max_enemy_replan_per_tick);
+  cfg.perf_sample_stride = std::max<uint32_t>(1, cfg.perf_sample_stride);
+  cfg.tcp_packet_debug_log_stride =
+      std::max<uint32_t>(1, cfg.tcp_packet_debug_log_stride);
 
   *out = cfg;
   return true;

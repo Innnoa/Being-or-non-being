@@ -27,9 +27,10 @@ struct ServerConfig {
   float enemy_spawn_per_player_per_second =
       0.75f;  // 每个存活玩家增加的刷怪速率
   float enemy_spawn_wave_growth_per_second =
-      0.2f;                               // 每波次额外增长（随 wave_id 增大）
-  uint32_t max_enemies_alive = 256;       // 同时存活敌人上限
-  uint32_t max_enemy_spawn_per_tick = 4;  // 单 tick 最大刷怪数量（防止卡顿）
+      0.2f;                                 // 每波次额外增长（随 wave_id 增大）
+  uint32_t max_enemies_alive = 256;         // 同时存活敌人上限
+  uint32_t max_enemy_spawn_per_tick = 4;    // 单 tick 最大刷怪数量（防止卡顿）
+  uint32_t max_enemy_replan_per_tick = 16;  // 单 tick 最大寻路重算次数
   // 射弹/战斗参数（用于快速调参，不用重新编译）
   float projectile_speed = 420.0f;         // 射弹速度（像素/秒）
   float projectile_radius = 6.0f;          // 射弹碰撞半径（像素）
@@ -40,8 +41,10 @@ struct ServerConfig {
   float projectile_attack_min_interval_seconds =
       0.05f;  // 射速上限（最小间隔，秒）
   float projectile_attack_max_interval_seconds =
-      2.0f;                               // 射速下限（最大间隔，秒）
-  float reconnect_grace_seconds = 15.0f;  // 断线重连宽限期（秒）
+      2.0f;                                   // 射速下限（最大间隔，秒）
+  float reconnect_grace_seconds = 15.0f;      // 断线重连宽限期（秒）
+  uint32_t perf_sample_stride = 1;            // 性能采样步长（每 N 帧记录一条）
+  uint32_t tcp_packet_debug_log_stride = 60;  // TCP包debug日志步长
   std::string log_level = "info";
 };
 

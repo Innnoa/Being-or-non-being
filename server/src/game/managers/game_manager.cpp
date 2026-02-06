@@ -18,6 +18,7 @@
 #include <spdlog/spdlog.h>
 #include <sstream>
 #include <string_view>
+#include <unordered_set>
 
 #include "network/tcp/tcp_session.hpp"
 #include "network/udp/udp_server.hpp"
@@ -35,6 +36,49 @@ constexpr float kDeltaPositionEpsilon = 1e-4f;    // delta 位置/朝向变化�
 constexpr uint32_t kFullSyncIntervalTicks = 180;  // 全量同步时间间隔
 constexpr uint32_t kUpgradeOptionCount = 3;       // 升级选项数量
 constexpr const char* kPerfRootDir = "server_metrics";  // 性能数据根目录
+
+void DedupProjectileSpawns(std::vector<lawnmower::ProjectileState>* spawns) {
+  if (spawns == nullptr || spawns->size() < 2) {
+    return;
+  }
+  std::unordered_set<uint32_t> seen;
+  seen.reserve(spawns->size());
+  std::size_t out = 0;
+  for (std::size_t i = 0; i < spawns->size(); ++i) {
+    auto& spawn = (*spawns)[i];
+    const uint32_t id = spawn.projectile_id();
+    if (!seen.insert(id).second) {
+      continue;
+    }
+    if (out != i) {
+      (*spawns)[out] = std::move(spawn);
+    }
+    out += 1;
+  }
+  spawns->resize(out);
+}
+
+void DedupProjectileDespawns(
+    std::vector<lawnmower::ProjectileDespawn>* despawns) {
+  if (despawns == nullptr || despawns->size() < 2) {
+    return;
+  }
+  std::unordered_set<uint32_t> seen;
+  seen.reserve(despawns->size());
+  std::size_t out = 0;
+  for (std::size_t i = 0; i < despawns->size(); ++i) {
+    auto& despawn = (*despawns)[i];
+    const uint32_t id = despawn.projectile_id();
+    if (!seen.insert(id).second) {
+      continue;
+    }
+    if (out != i) {
+      (*despawns)[out] = std::move(despawn);
+    }
+    out += 1;
+  }
+  despawns->resize(out);
+}
 
 lawnmower::ItemEffectType ResolveItemEffectType(std::string_view effect) {
   if (effect == "heal") {
@@ -287,6 +331,359 @@ void GameManager::RecordPlayerHistoryLocked(Scene& scene) {
   }
 }
 
+void GameManager::FillPlayerHighFreq(const PlayerRuntime& runtime,
+                                     lawnmower::PlayerState* out) {
+  if (out == nullptr) {
+    return;
+  }
+  out->Clear();
+  out->set_player_id(runtime.state.player_id());
+  out->set_rotation(runtime.state.rotation());
+  out->set_is_alive(runtime.state.is_alive());
+  out->set_last_processed_input_seq(runtime.last_input_seq);
+  // 因 position 是自定义类型，没有 set 函数，故直接赋值
+  *out->mutable_position() = runtime.state.position();
+}
+
+void GameManager::FillPlayerForSync(PlayerRuntime& runtime,
+                                    lawnmower::PlayerState* out) {
+  if (out == nullptr) {
+    return;
+  }
+  // 是否发生低频全量变化
+  if (runtime.low_freq_dirty) {
+    // 全量状态
+    *out = runtime.state;
+    out->set_last_processed_input_seq(runtime.last_input_seq);
+  } else {
+    // 只填充高频字段
+    FillPlayerHighFreq(runtime, out);
+  }
+}
+
+bool GameManager::PositionChanged(const lawnmower::Vector2& current,
+                                  const lawnmower::Vector2& last) {
+  // 如果当前位移与上次位移的绝对值大于可接受位移最小值，则为位置变化
+  return std::abs(current.x() - last.x()) > kDeltaPositionEpsilon ||
+         std::abs(current.y() - last.y()) > kDeltaPositionEpsilon;
+}
+
+void GameManager::UpdatePlayerLastSync(PlayerRuntime& runtime) {
+  runtime.last_sync_position = runtime.state.position();
+  runtime.last_sync_rotation = runtime.state.rotation();
+  runtime.last_sync_is_alive = runtime.state.is_alive();
+  runtime.last_sync_input_seq = runtime.last_input_seq;
+}
+
+void GameManager::UpdateEnemyLastSync(EnemyRuntime& runtime) {
+  runtime.last_sync_position = runtime.state.position();
+  runtime.last_sync_health = runtime.state.health();
+  runtime.last_sync_is_alive = runtime.state.is_alive();
+}
+
+void GameManager::MarkPlayerDirty(Scene& scene, uint32_t player_id,
+                                  PlayerRuntime& runtime, bool low_freq) {
+  if (low_freq) {
+    runtime.low_freq_dirty = true;
+  }
+  runtime.dirty = true;
+  scene.dirty_player_ids.insert(player_id);
+}
+
+void GameManager::MarkEnemyDirty(Scene& scene, uint32_t enemy_id,
+                                 EnemyRuntime& runtime) {
+  runtime.dirty = true;
+  scene.dirty_enemy_ids.insert(enemy_id);
+}
+
+void GameManager::MarkItemDirty(Scene& scene, uint32_t item_id,
+                                ItemRuntime& runtime) {
+  runtime.dirty = true;
+  scene.dirty_item_ids.insert(item_id);
+}
+
+void GameManager::BuildSyncPayloadsLocked(
+    uint32_t room_id, Scene& scene, bool force_full_sync,
+    const std::unordered_set<uint32_t>& dirty_player_ids,
+    const std::unordered_set<uint32_t>& dirty_enemy_ids,
+    const std::unordered_set<uint32_t>& dirty_item_ids,
+    lawnmower::S2C_GameStateSync* sync,
+    lawnmower::S2C_GameStateDeltaSync* delta, bool* built_sync,
+    bool* built_delta, uint32_t* perf_delta_items_size,
+    uint32_t* perf_sync_items_size) {
+  if (sync == nullptr || delta == nullptr || built_sync == nullptr ||
+      built_delta == nullptr || perf_delta_items_size == nullptr ||
+      perf_sync_items_size == nullptr) {
+    return;
+  }
+
+  *perf_delta_items_size = 0;
+  *perf_sync_items_size = 0;
+  std::vector<uint32_t> items_to_remove;
+  items_to_remove.reserve(scene.items.size());
+  std::vector<uint32_t> players_to_clear;
+  std::vector<uint32_t> enemies_to_clear;
+  std::vector<uint32_t> items_to_clear;
+  players_to_clear.reserve(dirty_player_ids.size());
+  enemies_to_clear.reserve(dirty_enemy_ids.size());
+  items_to_clear.reserve(dirty_item_ids.size());
+  if (force_full_sync) {
+    FillSyncTiming(room_id, scene.tick, sync);
+    if (!scene.players.empty()) {
+      sync->mutable_players()->Reserve(static_cast<int>(scene.players.size()));
+    }
+    if (!scene.enemies.empty()) {
+      sync->mutable_enemies()->Reserve(static_cast<int>(scene.enemies.size()));
+    }
+    if (!scene.items.empty()) {
+      sync->mutable_items()->Reserve(static_cast<int>(scene.items.size()));
+    }
+    for (auto& [_, runtime] : scene.players) {
+      FillPlayerForSync(runtime, sync->add_players());
+      UpdatePlayerLastSync(runtime);
+      runtime.dirty = false;
+      runtime.low_freq_dirty = false;
+    }
+    for (auto& [_, enemy] : scene.enemies) {
+      auto* out = sync->add_enemies();
+      *out = enemy.state;
+      UpdateEnemyLastSync(enemy);
+      enemy.dirty = false;
+      if (enemy.force_sync_left > 0) {
+        enemy.force_sync_left -= 1;
+      }
+    }
+    for (auto& [_, item] : scene.items) {
+      if (item.is_picked) {
+        items_to_remove.push_back(item.item_id);
+        continue;
+      }
+      auto* out = sync->add_items();
+      out->set_item_id(item.item_id);
+      out->set_type_id(item.type_id);
+      out->set_is_picked(item.is_picked);
+      out->set_effect_type(item.effect_type);
+      out->mutable_position()->set_x(item.x);
+      out->mutable_position()->set_y(item.y);
+      item.dirty = false;
+    }
+    *perf_sync_items_size = static_cast<uint32_t>(sync->items_size());
+    *built_sync = true;
+    scene.full_sync_elapsed = 0.0;
+    scene.dirty_player_ids.clear();
+    scene.dirty_enemy_ids.clear();
+    scene.dirty_item_ids.clear();
+  } else {
+    bool sync_inited = false;
+    bool delta_inited = false;
+    if (!scene.players.empty()) {
+      delta->mutable_players()->Reserve(static_cast<int>(scene.players.size()));
+    }
+    if (!scene.enemies.empty()) {
+      delta->mutable_enemies()->Reserve(static_cast<int>(scene.enemies.size()));
+    }
+    if (!scene.items.empty()) {
+      delta->mutable_items()->Reserve(static_cast<int>(scene.items.size()));
+    }
+
+    for (const auto player_id : dirty_player_ids) {
+      auto it = scene.players.find(player_id);
+      if (it == scene.players.end()) {
+        players_to_clear.push_back(player_id);
+        continue;
+      }
+      PlayerRuntime& runtime = it->second;
+      if (!runtime.dirty && !runtime.low_freq_dirty) {
+        players_to_clear.push_back(player_id);
+        continue;
+      }
+      if (runtime.low_freq_dirty) {
+        if (!sync_inited) {
+          FillSyncTiming(room_id, scene.tick, sync);
+          sync_inited = true;
+        }
+        FillPlayerForSync(runtime, sync->add_players());
+        *built_sync = true;
+        UpdatePlayerLastSync(runtime);
+        runtime.dirty = false;
+        runtime.low_freq_dirty = false;
+        players_to_clear.push_back(player_id);
+        continue;
+      }
+      uint32_t changed_mask = 0;
+      const auto& position = runtime.state.position();
+      if (PositionChanged(position, runtime.last_sync_position)) {
+        changed_mask |= lawnmower::PLAYER_DELTA_POSITION;
+      }
+      if (std::abs(runtime.state.rotation() - runtime.last_sync_rotation) >
+          kDeltaPositionEpsilon) {
+        changed_mask |= lawnmower::PLAYER_DELTA_ROTATION;
+      }
+      if (runtime.state.is_alive() != runtime.last_sync_is_alive) {
+        changed_mask |= lawnmower::PLAYER_DELTA_IS_ALIVE;
+      }
+      if (runtime.last_input_seq != runtime.last_sync_input_seq) {
+        changed_mask |= lawnmower::PLAYER_DELTA_LAST_PROCESSED_INPUT_SEQ;
+      }
+      if (changed_mask == 0) {
+        runtime.dirty = false;
+        players_to_clear.push_back(player_id);
+        continue;
+      }
+      if (!delta_inited) {
+        FillDeltaTiming(room_id, scene.tick, delta);
+        delta_inited = true;
+      }
+      auto* out = delta->add_players();
+      out->set_player_id(runtime.state.player_id());
+      out->set_changed_mask(changed_mask);
+      if ((changed_mask & lawnmower::PLAYER_DELTA_POSITION) != 0) {
+        *out->mutable_position() = position;
+      }
+      if ((changed_mask & lawnmower::PLAYER_DELTA_ROTATION) != 0) {
+        out->set_rotation(runtime.state.rotation());
+      }
+      if ((changed_mask & lawnmower::PLAYER_DELTA_IS_ALIVE) != 0) {
+        out->set_is_alive(runtime.state.is_alive());
+      }
+      if ((changed_mask & lawnmower::PLAYER_DELTA_LAST_PROCESSED_INPUT_SEQ) !=
+          0) {
+        out->set_last_processed_input_seq(
+            static_cast<int32_t>(runtime.last_input_seq));
+      }
+      *built_delta = true;
+      UpdatePlayerLastSync(runtime);
+      runtime.dirty = false;
+      players_to_clear.push_back(player_id);
+    }
+
+    for (const auto enemy_id : dirty_enemy_ids) {
+      auto it = scene.enemies.find(enemy_id);
+      if (it == scene.enemies.end()) {
+        enemies_to_clear.push_back(enemy_id);
+        continue;
+      }
+      EnemyRuntime& enemy = it->second;
+      if (!enemy.dirty && enemy.force_sync_left == 0) {
+        enemies_to_clear.push_back(enemy_id);
+        continue;
+      }
+      if (enemy.force_sync_left > 0) {
+        if (!sync_inited) {
+          FillSyncTiming(room_id, scene.tick, sync);
+          sync_inited = true;
+        }
+        auto* out = sync->add_enemies();
+        *out = enemy.state;
+        *built_sync = true;
+        UpdateEnemyLastSync(enemy);
+        enemy.dirty = false;
+        enemy.force_sync_left -= 1;
+        if (enemy.force_sync_left == 0) {
+          enemies_to_clear.push_back(enemy_id);
+        }
+        continue;
+      }
+      uint32_t changed_mask = 0;
+      const auto& position = enemy.state.position();
+      if (PositionChanged(position, enemy.last_sync_position)) {
+        changed_mask |= lawnmower::ENEMY_DELTA_POSITION;
+      }
+      if (enemy.state.health() != enemy.last_sync_health) {
+        changed_mask |= lawnmower::ENEMY_DELTA_HEALTH;
+      }
+      if (enemy.state.is_alive() != enemy.last_sync_is_alive) {
+        changed_mask |= lawnmower::ENEMY_DELTA_IS_ALIVE;
+      }
+      if (changed_mask == 0) {
+        enemy.dirty = false;
+        enemies_to_clear.push_back(enemy_id);
+        continue;
+      }
+      if (!delta_inited) {
+        FillDeltaTiming(room_id, scene.tick, delta);
+        delta_inited = true;
+      }
+      auto* out = delta->add_enemies();
+      out->set_enemy_id(enemy.state.enemy_id());
+      out->set_changed_mask(changed_mask);
+      if ((changed_mask & lawnmower::ENEMY_DELTA_POSITION) != 0) {
+        *out->mutable_position() = position;
+      }
+      if ((changed_mask & lawnmower::ENEMY_DELTA_HEALTH) != 0) {
+        out->set_health(enemy.state.health());
+      }
+      if ((changed_mask & lawnmower::ENEMY_DELTA_IS_ALIVE) != 0) {
+        out->set_is_alive(enemy.state.is_alive());
+      }
+      *built_delta = true;
+      UpdateEnemyLastSync(enemy);
+      enemy.dirty = false;
+      enemies_to_clear.push_back(enemy_id);
+    }
+
+    for (const auto item_id : dirty_item_ids) {
+      auto it = scene.items.find(item_id);
+      if (it == scene.items.end()) {
+        items_to_clear.push_back(item_id);
+        continue;
+      }
+      ItemRuntime& item = it->second;
+      if (!item.dirty) {
+        items_to_clear.push_back(item_id);
+        continue;
+      }
+      if (!delta_inited) {
+        FillDeltaTiming(room_id, scene.tick, delta);
+        delta_inited = true;
+      }
+      auto* out = delta->add_items();
+      out->set_item_id(item.item_id);
+      out->set_type_id(item.type_id);
+      out->set_is_picked(item.is_picked);
+      out->set_effect_type(item.effect_type);
+      out->mutable_position()->set_x(item.x);
+      out->mutable_position()->set_y(item.y);
+      *built_delta = true;
+      item.dirty = false;
+      items_to_clear.push_back(item_id);
+      if (item.is_picked) {
+        items_to_remove.push_back(item.item_id);
+      }
+    }
+    if (delta_inited) {
+      *perf_delta_items_size = static_cast<uint32_t>(delta->items_size());
+    }
+  }
+
+  if (!items_to_remove.empty()) {
+    for (const auto item_id : items_to_remove) {
+      auto item_it = scene.items.find(item_id);
+      if (item_it == scene.items.end()) {
+        continue;
+      }
+      scene.item_pool.push_back(std::move(item_it->second));
+      scene.items.erase(item_it);
+      scene.dirty_item_ids.erase(item_id);
+    }
+  }
+  if (!players_to_clear.empty()) {
+    for (const auto player_id : players_to_clear) {
+      scene.dirty_player_ids.erase(player_id);
+    }
+  }
+  if (!enemies_to_clear.empty()) {
+    for (const auto enemy_id : enemies_to_clear) {
+      scene.dirty_enemy_ids.erase(enemy_id);
+    }
+  }
+  if (!items_to_clear.empty()) {
+    for (const auto item_id : items_to_clear) {
+      scene.dirty_item_ids.erase(item_id);
+    }
+  }
+}
+
 void GameManager::CollectExpiredPlayersLocked(
     const Scene& scene, double grace_seconds,
     std::vector<uint32_t>* out) const {
@@ -319,14 +716,18 @@ bool GameManager::HandlePausedTickLocked(
   const auto perf_end = std::chrono::steady_clock::now();
   const double perf_ms =
       std::chrono::duration<double, std::milli>(perf_end - perf_start).count();
-  RecordPerfSampleLocked(scene, perf_ms, dt_seconds, true, 0, 0);
+  RecordPerfSampleLocked(scene, perf_ms, dt_seconds, true,
+                         static_cast<uint32_t>(scene.dirty_player_ids.size()),
+                         static_cast<uint32_t>(scene.dirty_enemy_ids.size()),
+                         static_cast<uint32_t>(scene.dirty_item_ids.size()), 0,
+                         0);
   return true;
 }
 
 void GameManager::CleanupExpiredPlayers(
     const std::vector<uint32_t>& expired_players) {
   for (const uint32_t player_id : expired_players) {
-    spdlog::info("玩家 {} 断线超时，移除", player_id);
+    spdlog::info("[disconnect] timeout player_id={}", player_id);
     RoomManager::Instance().RemovePlayer(player_id);
     RemovePlayer(player_id);
     TcpSession::RevokeToken(player_id);
@@ -335,21 +736,11 @@ void GameManager::CleanupExpiredPlayers(
 
 void GameManager::RecordPerfSampleLocked(Scene& scene, double elapsed_ms,
                                          double dt_seconds, bool is_paused,
+                                         uint32_t dirty_player_count,
+                                         uint32_t dirty_enemy_count,
+                                         uint32_t dirty_item_count,
                                          uint32_t delta_items_size,
                                          uint32_t sync_items_size) {
-  PerfSample sample;
-  sample.tick = scene.tick;
-  sample.logic_ms = elapsed_ms;
-  sample.dt_seconds = dt_seconds;
-  sample.player_count = static_cast<uint32_t>(scene.players.size());
-  sample.enemy_count = static_cast<uint32_t>(scene.enemies.size());
-  sample.projectile_count = static_cast<uint32_t>(scene.projectiles.size());
-  sample.item_count = static_cast<uint32_t>(scene.items.size());
-  sample.is_paused = is_paused;
-  sample.delta_items_size = delta_items_size;
-  sample.sync_items_size = sync_items_size;
-
-  scene.perf.samples.push_back(sample);
   scene.perf.tick_count += 1;
   scene.perf.total_ms += elapsed_ms;
   if (scene.perf.tick_count == 1) {
@@ -359,6 +750,28 @@ void GameManager::RecordPerfSampleLocked(Scene& scene, double elapsed_ms,
     scene.perf.min_ms = std::min(scene.perf.min_ms, elapsed_ms);
     scene.perf.max_ms = std::max(scene.perf.max_ms, elapsed_ms);
   }
+
+  const uint32_t stride = std::max<uint32_t>(1, config_.perf_sample_stride);
+  if (stride > 1 && (scene.tick % stride) != 0) {
+    return;
+  }
+
+  PerfSample sample;
+  sample.tick = scene.tick;
+  sample.logic_ms = elapsed_ms;
+  sample.dt_seconds = dt_seconds;
+  sample.player_count = static_cast<uint32_t>(scene.players.size());
+  sample.enemy_count = static_cast<uint32_t>(scene.enemies.size());
+  sample.projectile_count = static_cast<uint32_t>(scene.projectiles.size());
+  sample.item_count = static_cast<uint32_t>(scene.items.size());
+  sample.dirty_player_count = dirty_player_count;
+  sample.dirty_enemy_count = dirty_enemy_count;
+  sample.dirty_item_count = dirty_item_count;
+  sample.is_paused = is_paused;
+  sample.delta_items_size = delta_items_size;
+  sample.sync_items_size = sync_items_size;
+
+  scene.perf.samples.push_back(sample);
 }
 
 void GameManager::SavePerfStatsToFile(uint32_t room_id, const PerfStats& stats,
@@ -390,10 +803,34 @@ void GameManager::SavePerfStatsToFile(uint32_t room_id, const PerfStats& stats,
       stats.tick_count > 0 ? stats.total_ms / stats.tick_count : 0.0;
   std::vector<double> ms_values;
   ms_values.reserve(stats.samples.size());
+  uint64_t sum_players = 0;
+  uint64_t sum_enemies = 0;
+  uint64_t sum_items = 0;
+  uint64_t sum_dirty_players = 0;
+  uint64_t sum_dirty_enemies = 0;
+  uint64_t sum_dirty_items = 0;
   for (const auto& sample : stats.samples) {
     ms_values.push_back(sample.logic_ms);
+    sum_players += sample.player_count;
+    sum_enemies += sample.enemy_count;
+    sum_items += sample.item_count;
+    sum_dirty_players += sample.dirty_player_count;
+    sum_dirty_enemies += sample.dirty_enemy_count;
+    sum_dirty_items += sample.dirty_item_count;
   }
   const double p95_ms = ComputePercentile(ms_values, 0.95);
+  const double dirty_player_ratio =
+      sum_players > 0 ? static_cast<double>(sum_dirty_players) /
+                            static_cast<double>(sum_players)
+                      : 0.0;
+  const double dirty_enemy_ratio =
+      sum_enemies > 0 ? static_cast<double>(sum_dirty_enemies) /
+                            static_cast<double>(sum_enemies)
+                      : 0.0;
+  const double dirty_item_ratio = sum_items > 0
+                                      ? static_cast<double>(sum_dirty_items) /
+                                            static_cast<double>(sum_items)
+                                      : 0.0;
 
   out << "{\n";
   out << "  \"room_id\": " << room_id << ",\n";
@@ -412,9 +849,28 @@ void GameManager::SavePerfStatsToFile(uint32_t room_id, const PerfStats& stats,
       << ",\n";
   out << "  \"p95_ms\": " << std::fixed << std::setprecision(3) << p95_ms
       << ",\n";
+  out << "  \"dirty_player_ratio\": " << std::fixed << std::setprecision(6)
+      << dirty_player_ratio << ",\n";
+  out << "  \"dirty_enemy_ratio\": " << std::fixed << std::setprecision(6)
+      << dirty_enemy_ratio << ",\n";
+  out << "  \"dirty_item_ratio\": " << std::fixed << std::setprecision(6)
+      << dirty_item_ratio << ",\n";
   out << "  \"samples\": [\n";
   for (std::size_t i = 0; i < stats.samples.size(); ++i) {
     const auto& sample = stats.samples[i];
+    const double sample_dirty_player_ratio =
+        sample.player_count > 0
+            ? static_cast<double>(sample.dirty_player_count) /
+                  static_cast<double>(sample.player_count)
+            : 0.0;
+    const double sample_dirty_enemy_ratio =
+        sample.enemy_count > 0 ? static_cast<double>(sample.dirty_enemy_count) /
+                                     static_cast<double>(sample.enemy_count)
+                               : 0.0;
+    const double sample_dirty_item_ratio =
+        sample.item_count > 0 ? static_cast<double>(sample.dirty_item_count) /
+                                    static_cast<double>(sample.item_count)
+                              : 0.0;
     out << "    {\"tick\": " << sample.tick << ", \"logic_ms\": " << std::fixed
         << std::setprecision(3) << sample.logic_ms
         << ", \"dt_seconds\": " << std::fixed << std::setprecision(6)
@@ -422,6 +878,14 @@ void GameManager::SavePerfStatsToFile(uint32_t room_id, const PerfStats& stats,
         << ", \"enemies\": " << sample.enemy_count
         << ", \"projectiles\": " << sample.projectile_count
         << ", \"items\": " << sample.item_count
+        << ", \"dirty_players\": " << sample.dirty_player_count
+        << ", \"dirty_enemies\": " << sample.dirty_enemy_count
+        << ", \"dirty_items\": " << sample.dirty_item_count
+        << ", \"dirty_player_ratio\": " << std::fixed << std::setprecision(6)
+        << sample_dirty_player_ratio
+        << ", \"dirty_enemy_ratio\": " << std::fixed << std::setprecision(6)
+        << sample_dirty_enemy_ratio << ", \"dirty_item_ratio\": " << std::fixed
+        << std::setprecision(6) << sample_dirty_item_ratio
         << ", \"delta_items\": " << sample.delta_items_size
         << ", \"sync_items\": " << sample.sync_items_size
         << ", \"paused\": " << (sample.is_paused ? "true" : "false") << "}";
@@ -485,7 +949,30 @@ void GameManager::ScheduleGameTick(
     return;
   }
 
-  timer->expires_after(interval);
+  std::chrono::steady_clock::time_point deadline;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto scene_it = scenes_.find(room_id);
+    if (scene_it == scenes_.end()) {
+      return;
+    }
+    Scene& scene = scene_it->second;
+    if (scene.loop_timer != timer) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (scene.next_tick_time.time_since_epoch().count() == 0) {
+      scene.next_tick_time = now + interval;
+    }
+    deadline = scene.next_tick_time;
+    scene.next_tick_time += interval;
+    if (deadline + interval < now) {
+      deadline = now;
+      scene.next_tick_time = now + interval;
+    }
+  }
+
+  timer->expires_at(deadline);
   timer->async_wait([this, room_id, interval, timer,
                      tick_interval_seconds](const asio::error_code& ec) {
     if (ec == asio::error::operation_aborted) {
@@ -559,6 +1046,7 @@ void GameManager::StartGameLoop(uint32_t room_id) {
     scene.sync_idle_elapsed = 0.0;
     scene.full_sync_elapsed = 0.0;
     scene.last_tick_time = std::chrono::steady_clock::now();
+    scene.next_tick_time = std::chrono::steady_clock::time_point{};
     scene.dynamic_sync_interval = scene.sync_interval;
     ResetPerfStats(scene);
   }
@@ -752,10 +1240,22 @@ lawnmower::SceneInfo GameManager::CreateScene(
   scene.nav_g_score.assign(nav_cells, 0.0f);
   scene.nav_closed.assign(nav_cells, 0);
 
-  PlacePlayers(snapshot, &scene);  // 放置玩家
-
   const std::size_t max_enemies_alive =
       config_.max_enemies_alive > 0 ? config_.max_enemies_alive : 256;
+  scene.players.reserve(snapshot.players.size());
+  scene.enemies.reserve(max_enemies_alive);
+  scene.enemy_pool.reserve(max_enemies_alive);
+  scene.projectiles.reserve(max_enemies_alive);
+  scene.projectile_pool.reserve(max_enemies_alive);
+  const std::size_t max_items_alive =
+      items_config_.max_items_alive > 0 ? items_config_.max_items_alive : 64;
+  scene.items.reserve(max_items_alive);
+  scene.item_pool.reserve(max_items_alive);
+  scene.dirty_player_ids.reserve(snapshot.players.size());
+  scene.dirty_enemy_ids.reserve(max_enemies_alive);
+  scene.dirty_item_ids.reserve(max_items_alive);
+
+  PlacePlayers(snapshot, &scene);  // 放置玩家
 
   // 生成敌人lambda
   auto spawn_enemy = [&](uint32_t type_id) {
@@ -812,8 +1312,10 @@ lawnmower::SceneInfo GameManager::CreateScene(
     runtime.last_sync_health = runtime.state.health();
     runtime.last_sync_is_alive = runtime.state.is_alive();
     runtime.force_sync_left = kEnemySpawnForceSyncCount;
-    runtime.dirty = true;
-    scene.enemies.emplace(runtime.state.enemy_id(), std::move(runtime));
+    runtime.dirty = false;
+    auto [it, _] =
+        scene.enemies.emplace(runtime.state.enemy_id(), std::move(runtime));
+    MarkEnemyDirty(scene, it->first, it->second);
   };
 
   // 初始敌人数量
@@ -857,6 +1359,15 @@ bool GameManager::BuildFullState(uint32_t room_id,
   FillSyncTiming(room_id, scene_it->second.tick, sync);
 
   const Scene& scene = scene_it->second;
+  if (!scene.players.empty()) {
+    sync->mutable_players()->Reserve(static_cast<int>(scene.players.size()));
+  }
+  if (!scene.enemies.empty()) {
+    sync->mutable_enemies()->Reserve(static_cast<int>(scene.enemies.size()));
+  }
+  if (!scene.items.empty()) {
+    sync->mutable_items()->Reserve(static_cast<int>(scene.items.size()));
+  }
   // 全量同步包的玩家信息的state赋值
   for (const auto& [_, runtime] : scene.players) {
     auto* player_state = sync->add_players();
@@ -896,9 +1407,8 @@ void GameManager::ProcessItems(Scene& scene, bool* has_dirty) {
     return;
   }
 
-  auto mark_player_low_freq_dirty = [](PlayerRuntime& runtime) {
-    runtime.low_freq_dirty = true;
-    runtime.dirty = true;
+  auto mark_player_low_freq_dirty = [&](PlayerRuntime& runtime) {
+    MarkPlayerDirty(scene, runtime.state.player_id(), runtime, true);
   };
 
   const float pick_radius =
@@ -921,7 +1431,7 @@ void GameManager::ProcessItems(Scene& scene, bool* has_dirty) {
       }
 
       item.is_picked = true;
-      item.dirty = true;
+      MarkItemDirty(scene, item.item_id, item);
       *has_dirty = true;
 
       if (item.effect_type == lawnmower::ITEM_EFFECT_HEAL) {
@@ -989,58 +1499,23 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
     if (scene.game_over) {
       return;
     }
+    if (!scene.players.empty()) {
+      player_hurts.reserve(scene.players.size());
+      level_ups.reserve(scene.players.size());
+      expired_players.reserve(scene.players.size());
+    }
+    if (!scene.enemies.empty()) {
+      enemy_dieds.reserve(scene.enemies.size());
+      enemy_attack_states.reserve(scene.enemies.size());
+    }
+    if (!scene.projectiles.empty()) {
+      projectile_spawns.reserve(scene.projectiles.size());
+      projectile_despawns.reserve(scene.projectiles.size());
+    }
+    if (!scene.items.empty()) {
+      dropped_items.reserve(scene.items.size());
+    }
     const auto perf_start = std::chrono::steady_clock::now();
-    // 根据玩家运行时状态设置玩家高频状态报文(out)
-    auto fill_player_high_freq = [](const PlayerRuntime& runtime,
-                                    lawnmower::PlayerState* out) {
-      if (out == nullptr) {
-        return;
-      }
-      out->Clear();
-      out->set_player_id(runtime.state.player_id());
-      out->set_rotation(runtime.state.rotation());
-      out->set_is_alive(runtime.state.is_alive());
-      out->set_last_processed_input_seq(runtime.last_input_seq);
-      // 因positon是自定义类型，没有set函数，故直接赋值
-      *out->mutable_position() = runtime.state.position();
-    };
-
-    auto fill_player_for_sync = [&](PlayerRuntime& runtime,
-                                    lawnmower::PlayerState* out) {
-      if (out == nullptr) {
-        return;
-      }
-      // 是否发生低频全量变化
-      if (runtime.low_freq_dirty) {
-        // 全量状态
-        *out = runtime.state;
-        out->set_last_processed_input_seq(runtime.last_input_seq);
-      } else {
-        // 只填充高频字段
-        fill_player_high_freq(runtime, out);
-      }
-    };
-    // 判断位置是否改变
-    auto position_changed = [](const lawnmower::Vector2& current,
-                               const lawnmower::Vector2& last) {
-      // 如果当前位移与上次位移的绝对值大于可接受位移最小值，则为位置变化
-      return std::abs(current.x() - last.x()) > kDeltaPositionEpsilon ||
-             std::abs(current.y() - last.y()) > kDeltaPositionEpsilon;
-    };
-    // 更新玩家delta同步高频值
-    auto update_player_last_sync = [](PlayerRuntime& runtime) {
-      runtime.last_sync_position = runtime.state.position();
-      runtime.last_sync_rotation = runtime.state.rotation();
-      runtime.last_sync_is_alive = runtime.state.is_alive();
-      runtime.last_sync_input_seq = runtime.last_input_seq;
-    };
-    // 更新敌人delta同步高频值
-    auto update_enemy_last_sync = [](EnemyRuntime& runtime) {
-      runtime.last_sync_position = runtime.state.position();
-      runtime.last_sync_health = runtime.state.health();
-      runtime.last_sync_is_alive = runtime.state.is_alive();
-    };
-
     const auto now = std::chrono::steady_clock::now();
     // 没看明白
     const auto elapsed = scene.last_tick_time.time_since_epoch().count() == 0
@@ -1147,9 +1622,9 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
         }
 
         if (moved || consumed_input || runtime.low_freq_dirty) {
-          runtime.dirty = true;
+          MarkPlayerDirty(scene, runtime.state.player_id(), runtime, false);
+          has_dirty = true;
         }
-        has_dirty = has_dirty || runtime.dirty || runtime.low_freq_dirty;
       }
 
       scene.elapsed += dt_seconds;
@@ -1184,24 +1659,10 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
 
       RecordPlayerHistoryLocked(scene);
 
-      uint32_t pending_dirty_players = 0;
-      for (const auto& [_, runtime] : scene.players) {
-        if (runtime.dirty || runtime.low_freq_dirty) {
-          pending_dirty_players += 1;
-        }
-      }
-      uint32_t pending_dirty_enemies = 0;
-      for (const auto& [_, enemy] : scene.enemies) {
-        if (enemy.dirty || enemy.force_sync_left > 0) {
-          pending_dirty_enemies += 1;
-        }
-      }
-      uint32_t pending_dirty_items = 0;
-      for (const auto& [_, item] : scene.items) {
-        if (item.dirty) {
-          pending_dirty_items += 1;
-        }
-      }
+      const bool has_dirty_players = !scene.dirty_player_ids.empty();
+      const bool has_dirty_enemies = !scene.dirty_enemy_ids.empty();
+      const bool has_dirty_items = !scene.dirty_item_ids.empty();
+      has_dirty = has_dirty_players || has_dirty_enemies || has_dirty_items;
 
       const bool has_priority_events =
           !projectile_spawns.empty() || !projectile_despawns.empty() ||
@@ -1226,14 +1687,14 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
           std::max(scale_light, static_cast<double>(config_.sync_scale_medium));
       const double scale_idle =
           std::max(scale_medium, static_cast<double>(config_.sync_scale_idle));
-      if (has_priority_events || pending_dirty_players > 0) {
+      if (has_priority_events || has_dirty_players) {
         scene.sync_idle_elapsed = 0.0;
         scene.dynamic_sync_interval =
             std::chrono::duration<double>(base_sync_interval);
       } else {
         scene.sync_idle_elapsed += dt_seconds;
         double scale = 1.0;
-        if (pending_dirty_enemies > 0 || pending_dirty_items > 0) {
+        if (has_dirty_enemies || has_dirty_items) {
           scale = scene.sync_idle_elapsed >= idle_light_seconds ? scale_medium
                                                                 : scale_light;
         } else {
@@ -1265,204 +1726,23 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
       const bool want_sync = should_sync || force_full_sync;
       const bool need_sync = want_sync && (force_full_sync || has_dirty);
       if (need_sync) {
-        perf_delta_items_size = 0;
-        perf_sync_items_size = 0;
-        std::vector<uint32_t> items_to_remove;
-        if (force_full_sync) {
-          FillSyncTiming(room_id, scene.tick, &sync);
-          for (auto& [_, runtime] : scene.players) {
-            fill_player_for_sync(runtime, sync.add_players());
-            update_player_last_sync(runtime);
-            runtime.dirty = false;
-            runtime.low_freq_dirty = false;
-          }
-          for (auto& [_, enemy] : scene.enemies) {
-            auto* out = sync.add_enemies();
-            *out = enemy.state;
-            update_enemy_last_sync(enemy);
-            enemy.dirty = false;
-            if (enemy.force_sync_left > 0) {
-              enemy.force_sync_left -= 1;
-            }
-          }
-          for (auto& [_, item] : scene.items) {
-            if (item.is_picked) {
-              items_to_remove.push_back(item.item_id);
-              continue;
-            }
-            auto* out = sync.add_items();
-            out->set_item_id(item.item_id);
-            out->set_type_id(item.type_id);
-            out->set_is_picked(item.is_picked);
-            out->set_effect_type(item.effect_type);
-            out->mutable_position()->set_x(item.x);
-            out->mutable_position()->set_y(item.y);
-            item.dirty = false;
-          }
-          perf_sync_items_size = static_cast<uint32_t>(sync.items_size());
-          built_sync = true;
-          scene.full_sync_elapsed = 0.0;
-        } else {
-          bool sync_inited = false;
-          bool delta_inited = false;
-
-          for (auto& [_, runtime] : scene.players) {
-            if (!runtime.dirty && !runtime.low_freq_dirty) {
-              continue;
-            }
-            if (runtime.low_freq_dirty) {
-              if (!sync_inited) {
-                FillSyncTiming(room_id, scene.tick, &sync);
-                sync_inited = true;
-              }
-              fill_player_for_sync(runtime, sync.add_players());
-              built_sync = true;
-              update_player_last_sync(runtime);
-              runtime.dirty = false;
-              runtime.low_freq_dirty = false;
-              continue;
-            }
-            uint32_t changed_mask = 0;
-            const auto& position = runtime.state.position();
-            if (position_changed(position, runtime.last_sync_position)) {
-              changed_mask |= lawnmower::PLAYER_DELTA_POSITION;
-            }
-            if (std::abs(runtime.state.rotation() -
-                         runtime.last_sync_rotation) > kDeltaPositionEpsilon) {
-              changed_mask |= lawnmower::PLAYER_DELTA_ROTATION;
-            }
-            if (runtime.state.is_alive() != runtime.last_sync_is_alive) {
-              changed_mask |= lawnmower::PLAYER_DELTA_IS_ALIVE;
-            }
-            if (runtime.last_input_seq != runtime.last_sync_input_seq) {
-              changed_mask |= lawnmower::PLAYER_DELTA_LAST_PROCESSED_INPUT_SEQ;
-            }
-            if (changed_mask == 0) {
-              runtime.dirty = false;
-              continue;
-            }
-            if (!delta_inited) {
-              FillDeltaTiming(room_id, scene.tick, &delta);
-              delta_inited = true;
-            }
-            auto* out = delta.add_players();
-            out->set_player_id(runtime.state.player_id());
-            out->set_changed_mask(changed_mask);
-            if ((changed_mask & lawnmower::PLAYER_DELTA_POSITION) != 0) {
-              *out->mutable_position() = position;
-            }
-            if ((changed_mask & lawnmower::PLAYER_DELTA_ROTATION) != 0) {
-              out->set_rotation(runtime.state.rotation());
-            }
-            if ((changed_mask & lawnmower::PLAYER_DELTA_IS_ALIVE) != 0) {
-              out->set_is_alive(runtime.state.is_alive());
-            }
-            if ((changed_mask &
-                 lawnmower::PLAYER_DELTA_LAST_PROCESSED_INPUT_SEQ) != 0) {
-              out->set_last_processed_input_seq(
-                  static_cast<int32_t>(runtime.last_input_seq));
-            }
-            built_delta = true;
-            update_player_last_sync(runtime);
-            runtime.dirty = false;
-          }
-
-          for (auto& [_, enemy] : scene.enemies) {
-            if (!enemy.dirty && enemy.force_sync_left == 0) {
-              continue;
-            }
-            if (enemy.force_sync_left > 0) {
-              if (!sync_inited) {
-                FillSyncTiming(room_id, scene.tick, &sync);
-                sync_inited = true;
-              }
-              auto* out = sync.add_enemies();
-              *out = enemy.state;
-              built_sync = true;
-              update_enemy_last_sync(enemy);
-              enemy.dirty = false;
-              enemy.force_sync_left -= 1;
-              continue;
-            }
-            uint32_t changed_mask = 0;
-            const auto& position = enemy.state.position();
-            if (position_changed(position, enemy.last_sync_position)) {
-              changed_mask |= lawnmower::ENEMY_DELTA_POSITION;
-            }
-            if (enemy.state.health() != enemy.last_sync_health) {
-              changed_mask |= lawnmower::ENEMY_DELTA_HEALTH;
-            }
-            if (enemy.state.is_alive() != enemy.last_sync_is_alive) {
-              changed_mask |= lawnmower::ENEMY_DELTA_IS_ALIVE;
-            }
-            if (changed_mask == 0) {
-              enemy.dirty = false;
-              continue;
-            }
-            if (!delta_inited) {
-              FillDeltaTiming(room_id, scene.tick, &delta);
-              delta_inited = true;
-            }
-            auto* out = delta.add_enemies();
-            out->set_enemy_id(enemy.state.enemy_id());
-            out->set_changed_mask(changed_mask);
-            if ((changed_mask & lawnmower::ENEMY_DELTA_POSITION) != 0) {
-              *out->mutable_position() = position;
-            }
-            if ((changed_mask & lawnmower::ENEMY_DELTA_HEALTH) != 0) {
-              out->set_health(enemy.state.health());
-            }
-            if ((changed_mask & lawnmower::ENEMY_DELTA_IS_ALIVE) != 0) {
-              out->set_is_alive(enemy.state.is_alive());
-            }
-            built_delta = true;
-            update_enemy_last_sync(enemy);
-            enemy.dirty = false;
-          }
-
-          for (auto& [_, item] : scene.items) {
-            if (!item.dirty) {
-              continue;
-            }
-            if (!delta_inited) {
-              FillDeltaTiming(room_id, scene.tick, &delta);
-              delta_inited = true;
-            }
-            auto* out = delta.add_items();
-            out->set_item_id(item.item_id);
-            out->set_type_id(item.type_id);
-            out->set_is_picked(item.is_picked);
-            out->set_effect_type(item.effect_type);
-            out->mutable_position()->set_x(item.x);
-            out->mutable_position()->set_y(item.y);
-            built_delta = true;
-            item.dirty = false;
-            if (item.is_picked) {
-              items_to_remove.push_back(item.item_id);
-            }
-          }
-          if (delta_inited) {
-            perf_delta_items_size = static_cast<uint32_t>(delta.items_size());
-          }
-        }
-        if (!items_to_remove.empty()) {
-          for (const auto item_id : items_to_remove) {
-            auto item_it = scene.items.find(item_id);
-            if (item_it == scene.items.end()) {
-              continue;
-            }
-            scene.item_pool.push_back(std::move(item_it->second));
-            scene.items.erase(item_it);
-          }
-        }
+        BuildSyncPayloadsLocked(room_id, scene, force_full_sync,
+                                scene.dirty_player_ids, scene.dirty_enemy_ids,
+                                scene.dirty_item_ids, &sync, &delta,
+                                &built_sync, &built_delta,
+                                &perf_delta_items_size, &perf_sync_items_size);
       }
 
       const auto perf_end = std::chrono::steady_clock::now();
       const double perf_ms =
           std::chrono::duration<double, std::milli>(perf_end - perf_start)
               .count();
-      RecordPerfSampleLocked(scene, perf_ms, dt_seconds, false,
-                             perf_delta_items_size, perf_sync_items_size);
+      RecordPerfSampleLocked(
+          scene, perf_ms, dt_seconds, false,
+          static_cast<uint32_t>(scene.dirty_player_ids.size()),
+          static_cast<uint32_t>(scene.dirty_enemy_ids.size()),
+          static_cast<uint32_t>(scene.dirty_item_ids.size()),
+          perf_delta_items_size, perf_sync_items_size);
 
       if (game_over.has_value()) {
         scene.perf.end_time = std::chrono::system_clock::now();
@@ -1483,6 +1763,9 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
     return;
   }
 
+  DedupProjectileSpawns(&projectile_spawns);
+  DedupProjectileDespawns(&projectile_despawns);
+
   const auto event_now_ms = NowMs();
   const uint64_t event_now_count = static_cast<uint64_t>(event_now_ms.count());
 
@@ -1494,6 +1777,8 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
     projectile_spawn_msg.mutable_sync_time()->set_server_time(event_now_count);
     projectile_spawn_msg.mutable_sync_time()->set_tick(
         static_cast<uint32_t>(event_tick));
+    projectile_spawn_msg.mutable_projectiles()->Reserve(
+        static_cast<int>(projectile_spawns.size()));
     for (const auto& spawn : projectile_spawns) {
       *projectile_spawn_msg.add_projectiles() = spawn;
     }
@@ -1508,6 +1793,8 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
         event_now_count);
     projectile_despawn_msg.mutable_sync_time()->set_tick(
         static_cast<uint32_t>(event_tick));
+    projectile_despawn_msg.mutable_projectiles()->Reserve(
+        static_cast<int>(projectile_despawns.size()));
     for (const auto& despawn : projectile_despawns) {
       *projectile_despawn_msg.add_projectiles() = despawn;
     }
@@ -1518,6 +1805,8 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
   if (has_dropped_items) {
     dropped_item_msg.set_source_enemy_id(0);
     dropped_item_msg.set_wave_id(event_wave_id);
+    dropped_item_msg.mutable_items()->Reserve(
+        static_cast<int>(dropped_items.size()));
     for (const auto& item : dropped_items) {
       *dropped_item_msg.add_items() = item;
     }
@@ -1532,6 +1821,8 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
         event_now_count);
     enemy_attack_state_msg.mutable_sync_time()->set_tick(
         static_cast<uint32_t>(event_tick));
+    enemy_attack_state_msg.mutable_enemies()->Reserve(
+        static_cast<int>(enemy_attack_states.size()));
     for (const auto& delta : enemy_attack_states) {
       *enemy_attack_state_msg.add_enemies() = delta;
     }
@@ -1727,7 +2018,7 @@ bool GameManager::HandlePlayerInput(uint32_t player_id,
     runtime.last_input_seq =
         std::max(runtime.last_input_seq, input.input_seq());
     if (runtime.last_input_seq != prev_seq) {
-      runtime.dirty = true;
+      MarkPlayerDirty(scene, player_id, runtime, false);
     }
     runtime.wants_attacking = false;
     runtime.pending_inputs.clear();
@@ -1748,7 +2039,7 @@ bool GameManager::HandlePlayerInput(uint32_t player_id,
         std::max(runtime.last_input_seq, input.input_seq());
     if (runtime.last_input_seq != prev_seq) {
       // 需要尽快把输入确认序号同步回客户端，避免客户端预测队列长期堆积。
-      runtime.dirty = true;
+      MarkPlayerDirty(scene, player_id, runtime, false);
     }
     return true;
   }
@@ -2024,8 +2315,7 @@ bool GameManager::HandleUpgradeSelect(
     }
 
     ApplyUpgradeEffect(player_it->second, scene.upgrade_options[option_index]);
-    player_it->second.low_freq_dirty = true;
-    player_it->second.dirty = true;
+    MarkPlayerDirty(scene, player_id, player_it->second, true);
 
     if (player_it->second.pending_upgrade_count > 0) {
       player_it->second.pending_upgrade_count -= 1;
@@ -2243,7 +2533,8 @@ void GameManager::RemovePlayer(uint32_t player_id) {
     }
 
     scene_it->second.players.erase(player_id);  // 移除玩家对应会话中的玩家信息
-    if (scene_it->second.players.empty()) {     // 会话中玩家数量为0
+    scene_it->second.dirty_player_ids.erase(player_id);
+    if (scene_it->second.players.empty()) {  // 会话中玩家数量为0
       timer = scene_it->second.loop_timer;
       scenes_.erase(scene_it);  // 移除该会话
       scene_removed = true;
