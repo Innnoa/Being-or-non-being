@@ -15,7 +15,6 @@ constexpr std::array<const char*, 3> kConfigPaths = {
 ItemsConfig BuildDefaultItemsConfig() {
   ItemsConfig cfg;
   cfg.default_type_id = 1;
-  cfg.spawn_interval_seconds = 8.0f;
   cfg.max_items_alive = 6;
   cfg.pick_radius = 24.0f;
 
@@ -24,24 +23,22 @@ ItemsConfig BuildDefaultItemsConfig() {
                             .name = "回血道具",
                             .effect = "heal",
                             .value = 30,
-                            .can_spawn = true,
+                            .drop_weight = 100,
                         });
   cfg.items.emplace(2u, ItemTypeConfig{
                             .type_id = 2,
                             .name = "经验道具",
                             .effect = "exp",
                             .value = 10,
-                            .can_spawn = false,
+                            .drop_weight = 60,
                         });
   cfg.items.emplace(3u, ItemTypeConfig{
                             .type_id = 3,
                             .name = "加速道具",
                             .effect = "speed",
                             .value = 5,
-                            .can_spawn = false,
+                            .drop_weight = 40,
                         });
-
-  cfg.spawn_type_ids = {1};
   return cfg;
 }
 
@@ -89,18 +86,6 @@ void ExtractString(const std::string& content, std::string_view key,
   }
 }
 
-void ExtractBool(const std::string& content, std::string_view key, bool* out) {
-  if (out == nullptr) {
-    return;
-  }
-  std::regex re(std::string("\"") + std::string(key) +
-                "\"\\s*:\\s*(true|false)");
-  std::smatch match;
-  if (std::regex_search(content, match, re) && match.size() > 1) {
-    *out = match[1].str() == "true";
-  }
-}
-
 uint32_t ClampUInt32(uint32_t v, uint32_t lo, uint32_t hi) {
   return std::min(std::max(v, lo), hi);
 }
@@ -131,19 +116,14 @@ bool LoadItemsConfig(ItemsConfig* out) {
 
   ItemsConfig cfg;
   cfg.default_type_id = fallback.default_type_id;
-  cfg.spawn_interval_seconds = fallback.spawn_interval_seconds;
   cfg.max_items_alive = fallback.max_items_alive;
   cfg.pick_radius = fallback.pick_radius;
   cfg.items.clear();
-  cfg.spawn_type_ids.clear();
 
   ExtractUint(content, "default_type_id", &cfg.default_type_id);
-  ExtractFloat(content, "spawn_interval_seconds", &cfg.spawn_interval_seconds);
   ExtractUint(content, "max_items_alive", &cfg.max_items_alive);
   ExtractFloat(content, "pick_radius", &cfg.pick_radius);
 
-  cfg.spawn_interval_seconds =
-      std::clamp(cfg.spawn_interval_seconds, 0.1f, 300.0f);
   cfg.max_items_alive =
       ClampUInt32(cfg.max_items_alive, 1u, 1000u);
   cfg.pick_radius = std::clamp(cfg.pick_radius, 1.0f, 500.0f);
@@ -159,12 +139,15 @@ bool LoadItemsConfig(ItemsConfig* out) {
     ExtractUint(obj, "type_id", &item.type_id);
     ExtractString(obj, "name", &item.name);
     ExtractString(obj, "effect", &item.effect);
-    ExtractBool(obj, "can_spawn", &item.can_spawn);
 
     uint32_t value_u =
         static_cast<uint32_t>(std::max<int32_t>(0, item.value));
     ExtractUint(obj, "value", &value_u);
     item.value = static_cast<int32_t>(ClampUInt32(value_u, 0u, 100000u));
+
+    uint32_t weight_u = item.drop_weight;
+    ExtractUint(obj, "drop_weight", &weight_u);
+    item.drop_weight = ClampUInt32(weight_u, 0u, 100000u);
 
     if (item.type_id == 0) {
       continue;
@@ -189,17 +172,9 @@ bool LoadItemsConfig(ItemsConfig* out) {
     cfg.default_type_id = fallback.default_type_id;
   }
 
-  for (const auto& [type_id, item] : cfg.items) {
-    if (item.can_spawn) {
-      cfg.spawn_type_ids.push_back(type_id);
-    }
-  }
-  std::sort(cfg.spawn_type_ids.begin(), cfg.spawn_type_ids.end());
-
   if (cfg.items.find(cfg.default_type_id) == cfg.items.end()) {
-    cfg.default_type_id =
-        !cfg.spawn_type_ids.empty() ? cfg.spawn_type_ids.front()
-                                    : fallback.default_type_id;
+    cfg.default_type_id = !cfg.items.empty() ? cfg.items.begin()->first
+                                             : fallback.default_type_id;
   }
 
   *out = std::move(cfg);

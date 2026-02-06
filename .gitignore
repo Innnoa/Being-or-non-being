@@ -28,6 +28,7 @@ client/out/
 # 日志
 *.log
 logs/
+server_metrics/
 
 # 配置文件（可选）
 *.local.json

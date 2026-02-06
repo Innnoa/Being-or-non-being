@@ -220,7 +220,6 @@ class GameManager {
     uint32_t wave_id = 0;             // 当前波次编号
     double elapsed = 0.0;             // 场景累计运行时间
     double spawn_elapsed = 0.0;       // 距上次刷怪的累计时间
-    double item_spawn_elapsed = 0.0;  // 距上次生成道具的累计时间
     uint32_t rng_state = 1;           // 伪随机种子
     bool game_over = false;           // 是否已结束
     bool is_paused = false;           // 是否暂停（升级流程）
@@ -263,9 +262,7 @@ class GameManager {
   [[nodiscard]] const ItemTypeConfig& ResolveItemType(uint32_t type_id) const;
   [[nodiscard]] uint32_t PickSpawnEnemyTypeId(uint32_t* rng_state) const;
   void ProcessEnemies(Scene& scene, double dt_seconds, bool* has_dirty);
-  void ProcessItems(Scene& scene, double dt_seconds,
-                    std::vector<lawnmower::ItemState>* dropped_items,
-                    bool* has_dirty);
+  void ProcessItems(Scene& scene, bool* has_dirty);
   void ProcessSceneTick(uint32_t room_id, double tick_interval_seconds);
   void ProcessCombatAndProjectiles(
       Scene& scene, double dt_seconds,
@@ -276,6 +273,7 @@ class GameManager {
       std::optional<lawnmower::S2C_GameOver>* game_over,
       std::vector<lawnmower::ProjectileState>* projectile_spawns,
       std::vector<lawnmower::ProjectileDespawn>* projectile_despawns,
+      std::vector<lawnmower::ItemState>* dropped_items,
       bool* has_dirty);
   void BuildUpgradeOptionsLocked(Scene& scene);
   bool BeginUpgradeLocked(uint32_t room_id, Scene& scene, uint32_t player_id,

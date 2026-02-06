@@ -79,11 +79,13 @@ void GameManager::ProcessCombatAndProjectiles(
     std::optional<lawnmower::S2C_GameOver>* game_over,
     std::vector<lawnmower::ProjectileState>* projectile_spawns,
     std::vector<lawnmower::ProjectileDespawn>* projectile_despawns,
+    std::vector<lawnmower::ItemState>* dropped_items,
     bool* has_dirty) {
   if (player_hurts == nullptr || enemy_dieds == nullptr ||
       level_ups == nullptr || enemy_attack_states == nullptr ||
       game_over == nullptr || projectile_spawns == nullptr ||
-      projectile_despawns == nullptr || has_dirty == nullptr) {
+      projectile_despawns == nullptr || dropped_items == nullptr ||
+      has_dirty == nullptr) {
     return;
   }
 
@@ -150,6 +152,13 @@ void GameManager::ProcessCombatAndProjectiles(
       config_.projectile_attack_max_interval_seconds > 0.0f
           ? static_cast<double>(config_.projectile_attack_max_interval_seconds)
           : kMaxAttackIntervalSeconds);
+  const double tick_interval_seconds =
+      scene.tick_interval.count() > 0.0
+          ? scene.tick_interval.count()
+          : (config_.tick_rate > 0 ? 1.0 / static_cast<double>(config_.tick_rate)
+                                   : 1.0 / 60.0);
+  const bool allow_catchup =
+      dt_seconds <= tick_interval_seconds * 1.5;  // 轻微抖动允许补发
 
   auto rotation_dir = [](float rotation_deg) -> std::pair<float, float> {
     const float rad = rotation_deg * std::numbers::pi_v<float> / 180.0f;
@@ -366,6 +375,97 @@ void GameManager::ProcessCombatAndProjectiles(
     projectile_spawns->push_back(std::move(spawn));
   };
 
+  const uint32_t max_items_alive =
+      items_config_.max_items_alive > 0 ? items_config_.max_items_alive : 64;
+
+  std::vector<std::pair<uint32_t, uint32_t>> drop_candidates;
+  drop_candidates.reserve(items_config_.items.size());
+  uint32_t drop_weight_total = 0;
+  for (const auto& [type_id, item] : items_config_.items) {
+    if (ResolveItemEffectType(item.effect) != lawnmower::ITEM_EFFECT_HEAL) {
+      continue;
+    }
+    if (item.drop_weight == 0) {
+      continue;
+    }
+    drop_candidates.emplace_back(type_id, item.drop_weight);
+    drop_weight_total += item.drop_weight;
+  }
+
+  auto pick_drop_type_id = [&]() -> uint32_t {
+    if (drop_weight_total == 0) {
+      return 0;
+    }
+    const uint32_t roll = NextRng(&scene.rng_state) % drop_weight_total;
+    uint32_t accum = 0;
+    for (const auto& [type_id, weight] : drop_candidates) {
+      accum += weight;
+      if (roll < accum) {
+        return type_id;
+      }
+    }
+    return drop_candidates.back().first;
+  };
+
+  auto spawn_drop_item = [&](float x, float y, uint32_t type_id) {
+    if (scene.items.size() >= max_items_alive) {
+      return;
+    }
+    const ItemTypeConfig& type = ResolveItemType(type_id);
+    const lawnmower::ItemEffectType effect_type =
+        ResolveItemEffectType(type.effect);
+    if (effect_type == lawnmower::ITEM_EFFECT_NONE && type.effect != "none" &&
+        !type.effect.empty()) {
+      spdlog::warn("道具类型 {} effect={} 未识别，使用 NONE", type.type_id,
+                   type.effect);
+    }
+
+    const auto clamped_pos = ClampToMap(scene.config, x, y);
+    ItemRuntime runtime;
+    if (!scene.item_pool.empty()) {
+      runtime = std::move(scene.item_pool.back());
+      scene.item_pool.pop_back();
+    }
+    runtime.item_id = scene.next_item_id++;
+    runtime.type_id = type.type_id;
+    runtime.effect_type = effect_type;
+    runtime.x = clamped_pos.x();
+    runtime.y = clamped_pos.y();
+    runtime.is_picked = false;
+    runtime.dirty = true;
+    scene.items.emplace(runtime.item_id, runtime);
+
+    auto& dropped = dropped_items->emplace_back();
+    dropped.set_item_id(runtime.item_id);
+    dropped.set_type_id(runtime.type_id);
+    dropped.set_is_picked(false);
+    dropped.set_effect_type(runtime.effect_type);
+    dropped.mutable_position()->set_x(runtime.x);
+    dropped.mutable_position()->set_y(runtime.y);
+    *has_dirty = true;
+  };
+
+  auto try_drop_from_enemy = [&](const EnemyRuntime& enemy) {
+    if (drop_weight_total == 0) {
+      return;
+    }
+    const EnemyTypeConfig& type = ResolveEnemyType(enemy.state.type_id());
+    const uint32_t chance = std::min(type.drop_chance, 100u);
+    if (chance == 0) {
+      return;
+    }
+    const float roll = NextRngUnitFloat(&scene.rng_state) * 100.0f;
+    if (roll >= static_cast<float>(chance)) {
+      return;
+    }
+    const uint32_t type_id = pick_drop_type_id();
+    if (type_id == 0) {
+      return;
+    }
+    spawn_drop_item(enemy.state.position().x(),
+                    enemy.state.position().y(), type_id);
+  };
+
   // 开火：attack_speed 控制射速；dt 被 clamp 后最多补几发，避免掉帧时 DPS
   // 丢失。
   for (auto& [player_id, player] : scene.players) {
@@ -389,8 +489,10 @@ void GameManager::ProcessCombatAndProjectiles(
     const double interval = PlayerAttackIntervalSeconds(
         player.state.attack_speed(), attack_min_interval, attack_max_interval);
     uint32_t fired = 0;
+    const uint32_t max_shots_this_tick =
+        allow_catchup ? std::min<uint32_t>(max_shots_per_tick, 2u) : 1u;
     while (player.attack_cooldown_seconds <= 1e-6 &&
-           fired < max_shots_per_tick) {
+           fired < max_shots_this_tick) {
       player.attack_cooldown_seconds += interval;
       fired += 1;
 
@@ -496,6 +598,8 @@ void GameManager::ProcessCombatAndProjectiles(
           hit_enemy->force_sync_left =
               std::max(hit_enemy->force_sync_left, kEnemySpawnForceSyncCount);
           hit_enemy->dirty = true;
+
+          try_drop_from_enemy(*hit_enemy);
 
           lawnmower::S2C_EnemyDied died;
           died.set_enemy_id(hit_enemy->state.enemy_id());

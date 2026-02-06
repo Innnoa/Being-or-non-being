@@ -13,16 +13,14 @@ struct ItemTypeConfig {
   std::string name;
   std::string effect;  // 道具效果类型（如 "heal"）
   int32_t value = 0;   // 效果数值（如回血量）
-  bool can_spawn = false;
+  uint32_t drop_weight = 0;  // 掉落权重（0 表示不参与掉落）
 };
 
 struct ItemsConfig {
   uint32_t default_type_id = 1;
-  float spawn_interval_seconds = 8.0f;  // 生成间隔（秒）
   uint32_t max_items_alive = 6;          // 同时存在的道具上限
   float pick_radius = 24.0f;             // 拾取半径（像素）
   std::unordered_map<uint32_t, ItemTypeConfig> items;
-  std::vector<uint32_t> spawn_type_ids;  // 允许生成的 type_id（排序后）
 };
 
 // 从配置文件加载道具配置；若未找到文件或解析失败，返回 false 并保留默认值

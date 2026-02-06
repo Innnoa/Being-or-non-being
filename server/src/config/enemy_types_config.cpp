@@ -23,6 +23,7 @@ EnemyTypesConfig BuildDefaultEnemyTypesConfig() {
                               .move_speed = 60.0f,
                               .damage = 0,
                               .exp_reward = 10,
+                              .drop_chance = 30,
                               .attack_enter_radius = 34.0f,
                               .attack_exit_radius = 40.0f,
                               .attack_interval_seconds = 0.8f,
@@ -34,6 +35,7 @@ EnemyTypesConfig BuildDefaultEnemyTypesConfig() {
                               .move_speed = 50.0f,
                               .damage = 0,
                               .exp_reward = 20,
+                              .drop_chance = 35,
                               .attack_enter_radius = 34.0f,
                               .attack_exit_radius = 40.0f,
                               .attack_interval_seconds = 0.8f,
@@ -45,6 +47,7 @@ EnemyTypesConfig BuildDefaultEnemyTypesConfig() {
                               .move_speed = 40.0f,
                               .damage = 0,
                               .exp_reward = 40,
+                              .drop_chance = 45,
                               .attack_enter_radius = 34.0f,
                               .attack_exit_radius = 40.0f,
                               .attack_interval_seconds = 0.8f,
@@ -56,6 +59,7 @@ EnemyTypesConfig BuildDefaultEnemyTypesConfig() {
                               .move_speed = 100.0f,
                               .damage = 0,
                               .exp_reward = 50,
+                              .drop_chance = 50,
                               .attack_enter_radius = 34.0f,
                               .attack_exit_radius = 40.0f,
                               .attack_interval_seconds = 0.8f,
@@ -176,6 +180,10 @@ bool LoadEnemyTypesConfig(EnemyTypesConfig* out) {
         static_cast<uint32_t>(std::max<int32_t>(0, enemy.exp_reward));
     ExtractUint(obj, "exp_reward", &exp_u);
     enemy.exp_reward = static_cast<int32_t>(ClampUInt32(exp_u, 0u, 1000000u));
+
+    uint32_t drop_u = enemy.drop_chance;
+    ExtractUint(obj, "drop_chance", &drop_u);
+    enemy.drop_chance = ClampUInt32(drop_u, 0u, 100u);
 
     float attack_enter = enemy.attack_enter_radius;
     ExtractFloat(obj, "attack_enter_radius", &attack_enter);

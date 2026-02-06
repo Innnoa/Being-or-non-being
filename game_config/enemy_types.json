@@ -17,6 +17,8 @@
             "damage": 5,
             "__comment_exp_reward": "击杀后奖励经验（服务端结算）",
             "exp_reward": 10,
+            "__comment_drop_chance": "掉落概率（0-100）",
+            "drop_chance": 30,
             "__comment_attack_enter_radius": "进入攻击状态的距离阈值（像素）",
             "attack_enter_radius": 34.0,
             "__comment_attack_exit_radius": "退出攻击状态的距离阈值（像素，需 >= enter，用于迟滞）",
@@ -31,6 +33,7 @@
             "move_speed": 50.0,
             "damage": 8,
             "exp_reward": 20,
+            "drop_chance": 35,
             "attack_enter_radius": 34.0,
             "attack_exit_radius": 40.0,
             "attack_interval_seconds": 0.8
@@ -42,6 +45,7 @@
             "move_speed": 40.0,
             "damage": 10,
             "exp_reward": 40,
+            "drop_chance": 45,
             "attack_enter_radius": 34.0,
             "attack_exit_radius": 40.0,
             "attack_interval_seconds": 0.8
@@ -53,6 +57,7 @@
             "move_speed": 100.0,
             "damage": 15,
             "exp_reward": 50,
+            "drop_chance": 50,
             "attack_enter_radius": 34.0,
             "attack_exit_radius": 40.0,
             "attack_interval_seconds": 0.8
