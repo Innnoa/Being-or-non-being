@@ -440,9 +440,6 @@ void TcpSession::HandleReconnectRequest(const std::string& payload) {
     }
   }
 
-  const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch());
-  ack.set_server_time_ms(static_cast<uint64_t>(now_ms.count()));
   ack.set_room_id(target_room_id);
   ack.set_is_playing(is_playing);
 

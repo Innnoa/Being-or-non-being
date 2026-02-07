@@ -187,10 +187,17 @@ class GameManager {
     uint32_t item_id = 0;  // 道具实例ID
     uint32_t type_id = 0;  // 道具类型ID
     lawnmower::ItemEffectType effect_type =
-        lawnmower::ITEM_EFFECT_NONE;  // 道具效果类型
-    float x = 0.0f;                   // 当前x坐标
-    float y = 0.0f;                   // 当前y坐标
-    bool is_picked = false;           // 是否已被拾取
+        lawnmower::ITEM_EFFECT_NONE;   // 道具效果类型
+    float x = 0.0f;                    // 当前x坐标
+    float y = 0.0f;                    // 当前y坐标
+    bool is_picked = false;            // 是否已被拾取
+    float last_sync_x = 0.0f;          // delta 同步基线x
+    float last_sync_y = 0.0f;          // delta 同步基线y
+    bool last_sync_is_picked = false;  // delta 同步基线拾取状态
+    uint32_t last_sync_type_id = 0;    // delta 同步基线类型
+    lawnmower::ItemEffectType last_sync_effect_type =
+        lawnmower::ITEM_EFFECT_NONE;  // delta 同步基线效果
+    uint32_t force_sync_left = 0;     // 强制同步次数（用于新生成道具首包）
     bool dirty = false;               // 是否需要同步
   };
 
@@ -325,8 +332,11 @@ class GameManager {
                                 lawnmower::PlayerState* out);
   static bool PositionChanged(const lawnmower::Vector2& current,
                               const lawnmower::Vector2& last);
+  static bool PositionChanged(float current_x, float current_y, float last_x,
+                              float last_y);
   static void UpdatePlayerLastSync(PlayerRuntime& runtime);
   static void UpdateEnemyLastSync(EnemyRuntime& runtime);
+  static void UpdateItemLastSync(ItemRuntime& runtime);
   void BuildSyncPayloadsLocked(
       uint32_t room_id, Scene& scene, bool force_full_sync,
       const std::unordered_set<uint32_t>& dirty_player_ids,

@@ -448,6 +448,7 @@ void GameManager::ProcessCombatAndProjectiles(
     runtime.x = clamped_pos.x();
     runtime.y = clamped_pos.y();
     runtime.is_picked = false;
+    runtime.force_sync_left = 1;
     runtime.dirty = false;
     auto [it, _] = scene.items.emplace(runtime.item_id, runtime);
     MarkItemDirty(scene, it->first, it->second);

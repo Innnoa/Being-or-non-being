@@ -125,10 +125,12 @@ message S2C_ReconnectAck {
   uint32 player_id = 3; // 玩家ID
   uint32 room_id = 4; // 房间ID
   uint32 server_tick = 5; // 服务器当前 tick
-  uint64 server_time_ms = 6; // 服务器时间戳（毫秒）
   bool is_playing = 7; // 房间是否处于游戏中
   bool is_paused = 8; // 游戏是否暂停（升级流程）
   string session_token = 9; // 会话令牌（可选刷新）
+
+  reserved 6;
+  reserved "server_time_ms";
 }
 
 // =============================
@@ -360,6 +362,26 @@ message ItemState {
     ItemEffectType effect_type = 5; // 道具效果类型
 }
 
+// 道具字段级增量掩码
+enum ItemDeltaMask {
+  ITEM_DELTA_NONE = 0;
+  ITEM_DELTA_POSITION = 1;   // 位置更新
+  ITEM_DELTA_IS_PICKED = 2;  // 拾取状态更新
+  ITEM_DELTA_TYPE = 4;       // 类型更新
+  ITEM_DELTA_EFFECT = 8;     // 效果类型更新
+}
+
+// 高频道具状态增量（主要用于 UDP 高频同步）
+message ItemStateDelta {
+  uint32 item_id = 1;
+  uint32 changed_mask = 2;
+
+  Vector2 position = 3;
+  optional bool is_picked = 4;
+  optional uint32 type_id = 5;
+  optional ItemEffectType effect_type = 6;
+}
+
 // =============================
 // 高频 Delta 同步（仅变化字段）
 // =============================
@@ -410,11 +432,13 @@ message EnemyStateDelta {
 message S2C_GameStateDeltaSync {
   Timestamp sync_time = 1;
   uint32 room_id = 2;
-  uint64 server_time_ms = 3;
 
   repeated PlayerStateDelta players = 4;
   repeated EnemyStateDelta enemies = 5;
-  repeated ItemState items = 6; // 道具状态增量（仅包含变化的道具）
+  repeated ItemStateDelta items = 6; // 道具状态增量（仅包含变化的道具）
+
+  reserved 3;
+  reserved "server_time_ms";
 }
 
 // --------------客户端->服务器--------------
@@ -439,23 +463,30 @@ message S2C_GameStateSync {
   repeated EnemyState enemies = 3;             // 变化的敌人状态,容器
   repeated ItemState items = 4;                // 道具状态（如新掉落或被拾取）,容器
   uint32 room_id = 5;                          // 所属房间ID（便于客户端路由/校验）
-  uint64 server_time_ms = 6;                   // 服务器当前时间戳（毫秒）
+  bool is_full_snapshot = 7;                   // 是否为全量快照（true=全量，false=变化集合）
+
+  reserved 6;
+  reserved "server_time_ms";
 }
 
 // 射弹发射广播：客户端据此创建本地射弹并模拟飞行
 message S2C_ProjectileSpawn {
   Timestamp sync_time = 1;
   uint32 room_id = 2;
-  uint64 server_time_ms = 3;
   repeated ProjectileState projectiles = 4;
+
+  reserved 3;
+  reserved "server_time_ms";
 }
 
 // 射弹消失广播：客户端据此移除本地射弹（命中/超界/过期）
 message S2C_ProjectileDespawn {
   Timestamp sync_time = 1;
   uint32 room_id = 2;
-  uint64 server_time_ms = 3;
   repeated ProjectileDespawn projectiles = 4;
+
+  reserved 3;
+  reserved "server_time_ms";
 }
 
 // =============================
@@ -473,8 +504,10 @@ message EnemyAttackStateDelta {
 message S2C_EnemyAttackStateSync {
   Timestamp sync_time = 1;
   uint32 room_id = 2;
-  uint64 server_time_ms = 3;
   repeated EnemyAttackStateDelta enemies = 4;
+
+  reserved 3;
+  reserved "server_time_ms";
 }
 
 // 玩家受伤广播
@@ -553,6 +586,8 @@ message S2C_DroppedItem {
   repeated ItemState items = 1;   // 新掉落的道具列表,容器
   uint32 source_enemy_id = 2;     // 触发掉落的敌人实例ID（无则为0）
   uint32 wave_id = 3;             // 掉落所属波次（无则为0）
+  Timestamp sync_time = 4;        // 事件时间戳
+  uint32 room_id = 5;             // 房间ID（便于路由/校验）
 }
 
 // 玩家得分反馈

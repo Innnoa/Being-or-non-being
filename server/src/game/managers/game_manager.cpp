@@ -36,7 +36,7 @@ constexpr float kDeltaPositionEpsilon = 1e-4f;    // delta 位置/朝向变化�
 constexpr uint32_t kFullSyncIntervalTicks = 180;  // 全量同步时间间隔
 constexpr uint32_t kUpgradeOptionCount = 3;       // 升级选项数量
 constexpr const char* kPerfRootDir = "server_metrics";  // 性能数据根目录
-constexpr uint64_t kItemLogIntervalSeconds = 2;          // 道具日志输出间隔
+constexpr uint64_t kItemLogIntervalSeconds = 2;         // 道具日志输出间隔
 
 void DedupProjectileSpawns(std::vector<lawnmower::ProjectileState>* spawns) {
   if (spawns == nullptr || spawns->size() < 2) {
@@ -173,7 +173,6 @@ void FillSyncTiming(uint32_t room_id, uint64_t tick,
 
   const auto now_ms = NowMs();
   sync->set_room_id(room_id);
-  sync->set_server_time_ms(static_cast<uint64_t>(now_ms.count()));
 
   // lawnmower::Timestamp* 类型
   auto* ts = sync->mutable_sync_time();
@@ -190,7 +189,6 @@ void FillDeltaTiming(uint32_t room_id, uint64_t tick,
 
   const auto now_ms = NowMs();
   sync->set_room_id(room_id);
-  sync->set_server_time_ms(static_cast<uint64_t>(now_ms.count()));
 
   auto* ts = sync->mutable_sync_time();
   ts->set_server_time(static_cast<uint64_t>(now_ms.count()));
@@ -369,6 +367,12 @@ bool GameManager::PositionChanged(const lawnmower::Vector2& current,
          std::abs(current.y() - last.y()) > kDeltaPositionEpsilon;
 }
 
+bool GameManager::PositionChanged(float current_x, float current_y,
+                                  float last_x, float last_y) {
+  return std::abs(current_x - last_x) > kDeltaPositionEpsilon ||
+         std::abs(current_y - last_y) > kDeltaPositionEpsilon;
+}
+
 void GameManager::UpdatePlayerLastSync(PlayerRuntime& runtime) {
   runtime.last_sync_position = runtime.state.position();
   runtime.last_sync_rotation = runtime.state.rotation();
@@ -380,6 +384,14 @@ void GameManager::UpdateEnemyLastSync(EnemyRuntime& runtime) {
   runtime.last_sync_position = runtime.state.position();
   runtime.last_sync_health = runtime.state.health();
   runtime.last_sync_is_alive = runtime.state.is_alive();
+}
+
+void GameManager::UpdateItemLastSync(ItemRuntime& runtime) {
+  runtime.last_sync_x = runtime.x;
+  runtime.last_sync_y = runtime.y;
+  runtime.last_sync_is_picked = runtime.is_picked;
+  runtime.last_sync_type_id = runtime.type_id;
+  runtime.last_sync_effect_type = runtime.effect_type;
 }
 
 void GameManager::MarkPlayerDirty(Scene& scene, uint32_t player_id,
@@ -430,6 +442,7 @@ void GameManager::BuildSyncPayloadsLocked(
   items_to_clear.reserve(dirty_item_ids.size());
   if (force_full_sync) {
     FillSyncTiming(room_id, scene.tick, sync);
+    sync->set_is_full_snapshot(true);
     if (!scene.players.empty()) {
       sync->mutable_players()->Reserve(static_cast<int>(scene.players.size()));
     }
@@ -466,7 +479,9 @@ void GameManager::BuildSyncPayloadsLocked(
       out->set_effect_type(item.effect_type);
       out->mutable_position()->set_x(item.x);
       out->mutable_position()->set_y(item.y);
+      UpdateItemLastSync(item);
       item.dirty = false;
+      item.force_sync_left = 0;
     }
     *perf_sync_items_size = static_cast<uint32_t>(sync->items_size());
     *built_sync = true;
@@ -501,6 +516,7 @@ void GameManager::BuildSyncPayloadsLocked(
       if (runtime.low_freq_dirty) {
         if (!sync_inited) {
           FillSyncTiming(room_id, scene.tick, sync);
+          sync->set_is_full_snapshot(false);
           sync_inited = true;
         }
         FillPlayerForSync(runtime, sync->add_players());
@@ -572,6 +588,7 @@ void GameManager::BuildSyncPayloadsLocked(
       if (enemy.force_sync_left > 0) {
         if (!sync_inited) {
           FillSyncTiming(room_id, scene.tick, sync);
+          sync->set_is_full_snapshot(false);
           sync_inited = true;
         }
         auto* out = sync->add_enemies();
@@ -634,19 +651,58 @@ void GameManager::BuildSyncPayloadsLocked(
         items_to_clear.push_back(item_id);
         continue;
       }
+      uint32_t changed_mask = 0;
+      if (item.force_sync_left > 0) {
+        changed_mask |= lawnmower::ITEM_DELTA_POSITION;
+        changed_mask |= lawnmower::ITEM_DELTA_IS_PICKED;
+        changed_mask |= lawnmower::ITEM_DELTA_TYPE;
+        changed_mask |= lawnmower::ITEM_DELTA_EFFECT;
+      } else {
+        if (PositionChanged(item.x, item.y, item.last_sync_x,
+                            item.last_sync_y)) {
+          changed_mask |= lawnmower::ITEM_DELTA_POSITION;
+        }
+        if (item.is_picked != item.last_sync_is_picked) {
+          changed_mask |= lawnmower::ITEM_DELTA_IS_PICKED;
+        }
+        if (item.type_id != item.last_sync_type_id) {
+          changed_mask |= lawnmower::ITEM_DELTA_TYPE;
+        }
+        if (item.effect_type != item.last_sync_effect_type) {
+          changed_mask |= lawnmower::ITEM_DELTA_EFFECT;
+        }
+      }
+      if (changed_mask == 0) {
+        item.dirty = false;
+        items_to_clear.push_back(item_id);
+        continue;
+      }
       if (!delta_inited) {
         FillDeltaTiming(room_id, scene.tick, delta);
         delta_inited = true;
       }
       auto* out = delta->add_items();
       out->set_item_id(item.item_id);
-      out->set_type_id(item.type_id);
-      out->set_is_picked(item.is_picked);
-      out->set_effect_type(item.effect_type);
-      out->mutable_position()->set_x(item.x);
-      out->mutable_position()->set_y(item.y);
+      out->set_changed_mask(changed_mask);
+      if ((changed_mask & lawnmower::ITEM_DELTA_POSITION) != 0) {
+        out->mutable_position()->set_x(item.x);
+        out->mutable_position()->set_y(item.y);
+      }
+      if ((changed_mask & lawnmower::ITEM_DELTA_IS_PICKED) != 0) {
+        out->set_is_picked(item.is_picked);
+      }
+      if ((changed_mask & lawnmower::ITEM_DELTA_TYPE) != 0) {
+        out->set_type_id(item.type_id);
+      }
+      if ((changed_mask & lawnmower::ITEM_DELTA_EFFECT) != 0) {
+        out->set_effect_type(item.effect_type);
+      }
       *built_delta = true;
+      UpdateItemLastSync(item);
       item.dirty = false;
+      if (item.force_sync_left > 0) {
+        item.force_sync_left -= 1;
+      }
       items_to_clear.push_back(item_id);
       if (item.is_picked) {
         items_to_remove.push_back(item.item_id);
@@ -1756,9 +1812,9 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
       event_wave_id = scene.wave_id;
       event_tick = scene.tick;
 
-      const uint64_t log_interval_ticks = std::max<uint64_t>(
-          1, static_cast<uint64_t>(scene.config.tick_rate) *
-                 kItemLogIntervalSeconds);
+      const uint64_t log_interval_ticks =
+          std::max<uint64_t>(1, static_cast<uint64_t>(scene.config.tick_rate) *
+                                    kItemLogIntervalSeconds);
       if (scene.tick >= scene.last_item_log_tick + log_interval_ticks) {
         scene.last_item_log_tick = scene.tick;
         spdlog::info(
@@ -1789,7 +1845,6 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
   const bool has_projectile_spawn = !projectile_spawns.empty();
   if (has_projectile_spawn) {
     projectile_spawn_msg.set_room_id(room_id);
-    projectile_spawn_msg.set_server_time_ms(event_now_count);
     projectile_spawn_msg.mutable_sync_time()->set_server_time(event_now_count);
     projectile_spawn_msg.mutable_sync_time()->set_tick(
         static_cast<uint32_t>(event_tick));
@@ -1804,7 +1859,6 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
   const bool has_projectile_despawn = !projectile_despawns.empty();
   if (has_projectile_despawn) {
     projectile_despawn_msg.set_room_id(room_id);
-    projectile_despawn_msg.set_server_time_ms(event_now_count);
     projectile_despawn_msg.mutable_sync_time()->set_server_time(
         event_now_count);
     projectile_despawn_msg.mutable_sync_time()->set_tick(
@@ -1819,6 +1873,10 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
   lawnmower::S2C_DroppedItem dropped_item_msg;
   const bool has_dropped_items = !dropped_items.empty();
   if (has_dropped_items) {
+    dropped_item_msg.set_room_id(room_id);
+    dropped_item_msg.mutable_sync_time()->set_server_time(event_now_count);
+    dropped_item_msg.mutable_sync_time()->set_tick(
+        static_cast<uint32_t>(event_tick));
     dropped_item_msg.set_source_enemy_id(0);
     dropped_item_msg.set_wave_id(event_wave_id);
     dropped_item_msg.mutable_items()->Reserve(
@@ -1832,7 +1890,6 @@ void GameManager::ProcessSceneTick(uint32_t room_id,
   const bool has_enemy_attack_state = !enemy_attack_states.empty();
   if (has_enemy_attack_state) {
     enemy_attack_state_msg.set_room_id(room_id);
-    enemy_attack_state_msg.set_server_time_ms(event_now_count);
     enemy_attack_state_msg.mutable_sync_time()->set_server_time(
         event_now_count);
     enemy_attack_state_msg.mutable_sync_time()->set_tick(
