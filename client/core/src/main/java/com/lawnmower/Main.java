@@ -471,7 +471,7 @@ public class Main extends Game {
                     setScreen(new GameScreen(Main.this));
                 }
                 if (getScreen() instanceof GameScreen gameScreen) {
-                    gameScreen.resetWorldStateForFullSync();
+                    gameScreen.resetWorldStateForFullSync("reconnect_ack");
                 }
             });
             prepareUdpClientForMatch();
@@ -785,12 +785,20 @@ public class Main extends Game {
                     break;
                 case MSG_S2C_GAME_START:
                     prepareUdpClientForMatch();
+                    boolean createdGameScreen = false;
                     if (getScreen() instanceof GameRoomScreen) {
-                        // 切换到游戏场景
+                        // 鍒囨崲鍒版父鎴忓満鏅?
                         setScreen(new GameScreen(Main.this));
+                        createdGameScreen = true;
+                    }
+                    if (getScreen() instanceof GameScreen gameScreenStart) {
+                        if (createdGameScreen) {
+                            gameScreenStart.expectFullGameStateSync("game_start");
+                        } else {
+                            gameScreenStart.resetWorldStateForFullSync("game_start");
+                        }
                     }
                     break;
-
                 case MSG_S2C_GAME_STATE_SYNC:
                     // 将同步数据转发给 GameScreen（如果当前是游戏界面）
                     if (getScreen() instanceof GameScreen gameScreen) {
@@ -942,3 +950,4 @@ public class Main extends Game {
         }
     }
 }
+

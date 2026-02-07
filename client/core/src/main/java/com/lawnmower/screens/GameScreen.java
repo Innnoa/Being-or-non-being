@@ -159,6 +159,8 @@ public class GameScreen implements Screen {
     private float predictedRotation = 0f;
     private int inputSequence = 0;
     private boolean hasReceivedInitialState = false;
+    private boolean awaitingFullWorldState = true;
+    private String awaitingFullStateReason = "initial_state";
     private boolean facingRight = true;
     private final Vector2 displayPosition = new Vector2();
     private static final float DISPLAY_LERP_RATE = 12f;
@@ -311,6 +313,7 @@ public class GameScreen implements Screen {
         predictedPosition.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f);
         displayPosition.set(predictedPosition);
         resetInitialStateTracking();
+        expectFullGameStateSync("show_initial_state");
         resetAutoAttackState();
         isSelfAlive = true;
         initUpgradeOverlay();
@@ -2108,18 +2111,29 @@ public class GameScreen implements Screen {
         if (syncTime != null) {
             game.updateServerTick(Integer.toUnsignedLong(syncTime.getTick()));
         }
+        boolean isFullSnapshot = shouldTreatSyncAsFullSnapshot();
+        if (isFullSnapshot && Gdx.app != null) {
+            Gdx.app.log(TAG, "Applying full GameStateSync (" + awaitingFullStateReason + ")");
+        }
         updateSyncArrivalStats(arrivalMs);
         sampleClockOffset(sync.getServerTimeMs());
-        //婢跺嫮鎮婇弫灞兼眽閻樿埖鈧?
-        enemyStateCache.clear();
-        if (!sync.getEnemiesList().isEmpty()) {
-            for (Message.EnemyState enemy : sync.getEnemiesList()) {
+        List<Message.EnemyState> enemies = sync.getEnemiesList();
+        if (isFullSnapshot) {
+            enemyStateCache.clear();
+            if (!enemies.isEmpty()) {
+                for (Message.EnemyState enemy : enemies) {
+                    enemyStateCache.put((int) enemy.getEnemyId(), enemy);
+                }
+            }
+            syncEnemyViews(enemies, sync.getServerTimeMs(), true);
+        } else if (!enemies.isEmpty()) {
+            for (Message.EnemyState enemy : enemies) {
                 enemyStateCache.put((int) enemy.getEnemyId(), enemy);
             }
+            syncEnemyViews(enemies, sync.getServerTimeMs(), false);
         }
-        syncEnemyViews(sync.getEnemiesList(), sync.getServerTimeMs(), true);
         handlePlayersFromServer(sync.getPlayersList(), sync.getServerTimeMs());
-        if (shouldApplyItemSnapshot(incomingTick, sync.getServerTimeMs())) {
+        if (isFullSnapshot && shouldApplyItemSnapshot(incomingTick, sync.getServerTimeMs())) {
             syncItemViews(sync.getItemsList());
         }
         if (game.isAwaitingReconnectSnapshot()) {
@@ -2188,7 +2202,8 @@ public class GameScreen implements Screen {
         reconnectHoldStartMs = 0L;
     }
 
-    public void resetWorldStateForFullSync() {
+    public void resetWorldStateForFullSync(String reason) {
+        String tag = (reason == null || reason.isBlank()) ? "world_reset" : reason;
         serverPlayerStates.clear();
         enemyViews.clear();
         enemyStateCache.clear();
@@ -2201,7 +2216,25 @@ public class GameScreen implements Screen {
         resetTargetingState();
         resetAutoAttackState();
         resetInitialStateTracking();
+        expectFullGameStateSync(tag);
         hasReceivedInitialState = false;
+    }
+
+    public void expectFullGameStateSync(String reason) {
+        awaitingFullWorldState = true;
+        awaitingFullStateReason = (reason == null || reason.isBlank()) ? "unknown" : reason;
+    }
+
+    private boolean shouldTreatSyncAsFullSnapshot() {
+        if (!hasReceivedInitialState) {
+            awaitingFullWorldState = false;
+            return true;
+        }
+        if (awaitingFullWorldState) {
+            awaitingFullWorldState = false;
+            return true;
+        }
+        return false;
     }
 
     private UpgradeSession ensureUpgradeSession() {
@@ -2631,7 +2664,10 @@ public class GameScreen implements Screen {
         }
         //閺囧瓨鏌婇弮鍫曟？楠炴湹绗栭崗銊╁櫤閸氬本顒?
         lastDeltaResyncRequestMs = now;
-        game.requestFullGameStateSync("delta:" + reason);
+        String deltaTag = (reason == null || reason.isBlank()) ? "unknown" : reason;
+        String requestTag = "delta:" + deltaTag;
+        expectFullGameStateSync(requestTag);
+        game.requestFullGameStateSync(requestTag);
     }
 
     private void handleProjectileSpawnEvent(Message.S2C_ProjectileSpawn spawn) {
@@ -3306,7 +3342,9 @@ public class GameScreen implements Screen {
         initialStateRequestCount++;
         if (game != null) {
             String tag = reason != null ? reason : "unknown";
-            game.requestFullGameStateSync("GameScreen:" + tag + "#"+ initialStateRequestCount);
+            String requestTag = "GameScreen:" + tag + "#" + initialStateRequestCount;
+            expectFullGameStateSync("initial_request:" + requestTag);
+            game.requestFullGameStateSync(requestTag);
         }
         lastInitialStateRequestMs = timestampMs;
     }
