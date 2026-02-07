@@ -103,7 +103,6 @@ public class GameScreen implements Screen {
     private static final int ITEM_DELTA_POSITION_MASK = Message.ItemDeltaMask.ITEM_DELTA_POSITION_VALUE;
     private static final int ITEM_DELTA_IS_PICKED_MASK = Message.ItemDeltaMask.ITEM_DELTA_IS_PICKED_VALUE;
     private static final int ITEM_DELTA_TYPE_MASK = Message.ItemDeltaMask.ITEM_DELTA_TYPE_VALUE;
-    private static final int ITEM_DELTA_EFFECT_MASK = Message.ItemDeltaMask.ITEM_DELTA_EFFECT_VALUE;
 
     private final Vector2 renderBuffer = new Vector2();
     private final Vector2 projectileTempVector = new Vector2();
@@ -134,6 +133,7 @@ public class GameScreen implements Screen {
     private long lastItemDeltaTick = -1L;
     private long lastItemSyncServerTimeMs = -1L;
     private long lastDroppedItemServerTimeMs = -1L;
+    private long lastDroppedItemTick = -1L;
 
     private Main game;
     private OrthographicCamera camera;
@@ -379,7 +379,7 @@ public class GameScreen implements Screen {
             region = getItemFallbackRegion();
         }
         ItemView view = itemViews.computeIfAbsent(itemId, ItemView::new);
-        view.update(region, itemPositionBuffer, (int) resolvedState.getTypeId(), resolvedState.getEffectType());
+        view.update(region, itemPositionBuffer, (int) resolvedState.getTypeId());
     }
 
     private Message.ItemState ensureItemPosition(Message.ItemState incoming) {
@@ -439,6 +439,27 @@ public class GameScreen implements Screen {
         return true;
     }
 
+    private boolean shouldAcceptDroppedItems(long incomingTick, long serverTimeMs) {
+        if (incomingTick >= 0L) {
+            if (lastDroppedItemTick >= 0L && Long.compareUnsigned(incomingTick, lastDroppedItemTick) <= 0) {
+                return false;
+            }
+            lastDroppedItemTick = incomingTick;
+            if (serverTimeMs > lastDroppedItemServerTimeMs) {
+                lastDroppedItemServerTimeMs = serverTimeMs;
+            }
+            return true;
+        }
+        if (serverTimeMs > 0L && lastDroppedItemServerTimeMs > 0L
+                && serverTimeMs <= lastDroppedItemServerTimeMs) {
+            return false;
+        }
+        if (serverTimeMs > 0L) {
+            lastDroppedItemServerTimeMs = serverTimeMs;
+        }
+        return true;
+    }
+
     private void applyItemDeltaStates(List<Message.ItemStateDelta> items, long incomingTick, long serverTimeMs) {
         if (items == null || items.isEmpty()) {
             return;
@@ -481,9 +502,6 @@ public class GameScreen implements Screen {
         if (incoming.hasTypeId()) {
             builder.setTypeId(incoming.getTypeId());
         }
-        if (incoming.hasEffectType()) {
-            builder.setEffectType(incoming.getEffectType());
-        }
         return builder.build();
     }
 
@@ -505,9 +523,6 @@ public class GameScreen implements Screen {
         }
         if ((mask & ITEM_DELTA_TYPE_MASK) != 0 && delta.hasTypeId()) {
             builder.setTypeId(delta.getTypeId());
-        }
-        if ((mask & ITEM_DELTA_EFFECT_MASK) != 0 && delta.hasEffectType()) {
-            builder.setEffectType(delta.getEffectType());
         }
         return builder.build();
     }
@@ -1563,19 +1578,17 @@ public class GameScreen implements Screen {
         final Vector2 position = new Vector2();
         TextureRegion region;
         int typeId;
-        Message.ItemEffectType effectType = Message.ItemEffectType.ITEM_EFFECT_NONE;
 
         ItemView(int itemId) {
             this.itemId = itemId;
         }
 
-        void update(TextureRegion textureRegion, Vector2 sourcePosition, int typeId, Message.ItemEffectType effectType) {
+        void update(TextureRegion textureRegion, Vector2 sourcePosition, int typeId) {
             if (textureRegion != null) {
                 this.region = textureRegion;
             }
             this.position.set(sourcePosition);
             this.typeId = typeId;
-            this.effectType = effectType;
         }
     }
 
@@ -3030,12 +3043,10 @@ public class GameScreen implements Screen {
         }
         long arrivalMs = TimeUtils.millis();
         Message.Timestamp syncTime = droppedItem.hasSyncTime() ? droppedItem.getSyncTime() : null;
+        long incomingTick = extractSyncTick(syncTime);
         long serverTimeMs = resolveServerTime(syncTime, arrivalMs);
-        if (serverTimeMs > 0L && lastDroppedItemServerTimeMs > 0L && serverTimeMs < lastDroppedItemServerTimeMs) {
+        if (!shouldAcceptDroppedItems(incomingTick, serverTimeMs)) {
             return;
-        }
-        if (serverTimeMs > 0L) {
-            lastDroppedItemServerTimeMs = serverTimeMs;
         }
         showStatusToast("???????" + droppedItem.getItemsCount() + " ?????????");
         droppedItemDedupSet.clear();
@@ -3325,6 +3336,7 @@ public class GameScreen implements Screen {
             lastItemDeltaTick = -1L;
             lastItemSyncServerTimeMs = -1L;
             lastDroppedItemServerTimeMs = -1L;
+            lastDroppedItemTick = -1L;
         }
     }
 
